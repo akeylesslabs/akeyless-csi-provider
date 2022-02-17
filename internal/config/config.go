@@ -18,7 +18,6 @@ import (
 )
 
 const (
-	UnixSocketDefault     = "/tmp/akeyless_kms_plugin.sock"
 	AkeylessURL           = "AKEYLESS_URL"
 	AkeylessAccessType    = "AKEYLESS_ACCESS_TYPE"
 	AkeylessAccessID      = "AKEYLESS_ACCESS_ID"
