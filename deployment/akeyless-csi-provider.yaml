@@ -54,8 +54,7 @@ spec:
           image: akeyless/akeyless-csi-provider:latest
           imagePullPolicy: Always
           args:
-            - -endpoint=/provider/akeyless.vault.sock
-            - -debug=false
+            - -endpoint=/provider/akeyless.vault.sock            
           resources:
             requests:
               cpu: 50m
