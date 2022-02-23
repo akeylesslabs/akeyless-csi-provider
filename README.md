@@ -1,5 +1,4 @@
-# akeyless-csi-provider
-Akeyless Provider for Secret Store CSI Driver
+# Akeyless Provider for Secret Store CSI Driver
 
 [Akeyless](https://www.akeyless.io/) provider for the [Secrets Store CSI driver](https://github.com/kubernetes-sigs/secrets-store-csi-driver) allows you to get secrets stored in Akeyless and use the Secrets Store CSI driver interface to mount them into Kubernetes pods.
 
