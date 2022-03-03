@@ -35,7 +35,7 @@ func (p *Server) Mount(ctx context.Context, req *pb.MountRequest) (*pb.MountResp
 		return nil, err
 	}
 
-	log.Printf("starting authentication routine to %v", cfg.VaultAddress)
+	log.Printf("starting authentication routine to %v", cfg.AkeylessGatewayURL)
 	closed := make(chan bool, 1)
 	err = cfg.StartAuthentication(ctx, closed)
 

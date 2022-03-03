@@ -55,10 +55,10 @@ func (p *provider) HandleMountRequest(ctx context.Context, cfg config.Config) (*
 			continue
 		}
 
-		versions[fmt.Sprintf("%s:%s", secret.ObjectName, secret.SecretPath)] = "0"
+		versions[fmt.Sprintf("%s:%s", secret.FileName, secret.SecretPath)] = "0"
 
-		files = append(files, &pb.File{Path: secret.ObjectName, Mode: int32(cfg.FilePermission), Contents: []byte(it.GetPublicValue())})
-		log.Printf("secret added to mount response, directory: %v, file: %v", cfg.TargetPath, secret.ObjectName)
+		files = append(files, &pb.File{Path: secret.FileName, Mode: int32(cfg.FilePermission), Contents: []byte(it.GetPublicValue())})
+		log.Printf("secret added to mount response, directory: %v, file: %v", cfg.TargetPath, secret.FileName)
 	}
 
 	var ov []*pb.ObjectVersion

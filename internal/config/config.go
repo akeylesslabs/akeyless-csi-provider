@@ -9,7 +9,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"strconv"
 	"time"
 
 	"github.com/akeylesslabs/akeyless-go/v2"
@@ -61,11 +60,8 @@ type Config struct {
 //
 // So we just deserialise by hand to avoid complexity and two passes.
 type Parameters struct {
-	VaultAddress             string
-	VaultRoleName            string
+	AkeylessGatewayURL       string
 	VaultKubernetesMountPath string
-	VaultNamespace           string
-	VaultTLSConfig           TLSConfig
 	Secrets                  []Secret
 	PodInfo                  PodInfo
 
@@ -94,7 +90,7 @@ type PodInfo struct {
 }
 
 type Secret struct {
-	ObjectName string                 `yaml:"objectName,omitempty"`
+	FileName   string                 `yaml:"fileName,omitempty"`
 	SecretPath string                 `yaml:"secretPath,omitempty"`
 	SecretType string                 `yaml:"secretType,omitempty"`
 	SecretArgs map[string]interface{} `yaml:"secretArgs,omitempty"`
@@ -111,7 +107,7 @@ func Parse(parametersStr, targetPath, permissionStr string, defaultVaultAddr str
 		return Config{}, err
 	}
 
-	AklClient = createClient(config.VaultAddress)
+	AklClient = createClient(config.AkeylessGatewayURL)
 	if config.Parameters.AkeylessAccessType == "" {
 		config.Parameters.AkeylessAccessType = string(config.detectAccessType(AklClient))
 
@@ -134,7 +130,7 @@ func Parse(parametersStr, targetPath, permissionStr string, defaultVaultAddr str
 	return config, nil
 }
 
-func parseParameters(parametersStr string, defaultVaultAddress string, defaultVaultKubernetesMountPath string) (Parameters, error) {
+func parseParameters(parametersStr string, defaultAkeylessGatewayURL string, defaultVaultKubernetesMountPath string) (Parameters, error) {
 	var params map[string]string
 	err := json.Unmarshal([]byte(parametersStr), &params)
 	if err != nil {
@@ -142,14 +138,7 @@ func parseParameters(parametersStr string, defaultVaultAddress string, defaultVa
 	}
 
 	var parameters Parameters
-	parameters.VaultRoleName = params["roleName"]
-	parameters.VaultAddress = params["vaultAddress"]
-	parameters.VaultNamespace = params["vaultNamespace"]
-	parameters.VaultTLSConfig.CACertPath = params["vaultCACertPath"]
-	parameters.VaultTLSConfig.CADirectory = params["vaultCADirectory"]
-	parameters.VaultTLSConfig.TLSServerName = params["vaultTLSServerName"]
-	parameters.VaultTLSConfig.ClientCertPath = params["vaultTLSClientCertPath"]
-	parameters.VaultTLSConfig.ClientKeyPath = params["vaultTLSClientKeyPath"]
+	parameters.AkeylessGatewayURL = params["akeylessGatewayURL"]
 	parameters.VaultKubernetesMountPath = params["vaultKubernetesMountPath"]
 	parameters.PodInfo.Name = params["csi.storage.k8s.io/pod.name"]
 	parameters.PodInfo.UID = types.UID(params["csi.storage.k8s.io/pod.uid"])
@@ -162,23 +151,14 @@ func parseParameters(parametersStr string, defaultVaultAddress string, defaultVa
 	parameters.AkeylessGCPAudience = params["akeylessGCPAudience"]
 	parameters.AkeylessUIDInitToken = params["akeylessUIDInitToken"]
 
-	if skipTLS, ok := params["vaultSkipTLSVerify"]; ok {
-		value, err := strconv.ParseBool(skipTLS)
-		if err == nil {
-			parameters.VaultTLSConfig.SkipVerify = value
-		} else {
-			return Parameters{}, err
-		}
-	}
-
 	secretsYaml := params["objects"]
 	err = yaml.Unmarshal([]byte(secretsYaml), &parameters.Secrets)
 	if err != nil {
 		return Parameters{}, err
 	}
 
-	if parameters.VaultAddress == "" {
-		parameters.VaultAddress = os.Getenv(AkeylessURL)
+	if parameters.AkeylessGatewayURL == "" {
+		parameters.AkeylessGatewayURL = os.Getenv(AkeylessURL)
 	}
 
 	if parameters.AkeylessAccessType == "" {
@@ -206,8 +186,8 @@ func parseParameters(parametersStr string, defaultVaultAddress string, defaultVa
 	}
 
 	// Set default values.
-	if parameters.VaultAddress == "" {
-		parameters.VaultAddress = defaultVaultAddress
+	if parameters.AkeylessGatewayURL == "" {
+		parameters.AkeylessGatewayURL = defaultAkeylessGatewayURL
 	}
 
 	if parameters.VaultKubernetesMountPath == "" {
@@ -242,9 +222,6 @@ func (c *Config) validate() error {
 	if c.TargetPath == "" {
 		return errors.New("missing target path field")
 	}
-	if c.Parameters.VaultRoleName == "" {
-		return errors.New("missing 'roleName' in SecretProviderClass definition")
-	}
 	if len(c.Parameters.Secrets) == 0 {
 		return errors.New("no secrets configured - the provider will not read any secret material")
 	}
@@ -252,11 +229,11 @@ func (c *Config) validate() error {
 	return nil
 }
 
-func createClient(vaultAddress string) *akeyless.V2ApiService {
+func createClient(akeylessGatewayURL string) *akeyless.V2ApiService {
 	cfg := &akeyless.Configuration{
 		Servers: []akeyless.ServerConfiguration{
 			{
-				URL: vaultAddress,
+				URL: akeylessGatewayURL,
 			},
 		},
 		HTTPClient: &http.Client{

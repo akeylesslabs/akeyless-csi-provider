@@ -45,7 +45,7 @@ func (c *Config) authenticate(ctx context.Context, aklClient *akeyless.V2ApiServ
 
 	authOut, _, err := aklClient.Auth(ctx).Body(*authBody).Execute()
 	if err != nil {
-		return fmt.Errorf("authentication failed %v, %w", c.VaultAddress, err)
+		return fmt.Errorf("authentication failed %v, %w", c.AkeylessGatewayURL, err)
 	}
 
 	setAuthToken(authOut.GetToken())

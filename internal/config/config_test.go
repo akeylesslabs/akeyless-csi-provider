@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	objects      = "-\n  secretPath: \"/foo/bar\"\n  objectName: \"bar1\""
+	objects      = "-\n  secretPath: \"/foo/bar\"\n  fileName: \"bar1\""
 	certsSPCYaml = `apiVersion: secrets-store.csi.x-k8s.io/v1
 kind: SecretProviderClass
 metadata:
@@ -20,15 +20,15 @@ spec:
   provider: akeyless
   parameters:
     objects: |
-      - objectName: "secret1"
+      - fileName: "secret1"
         secretPath: "/F1/F2/secret1"
         secretType: "StaticSecret"
         secretArgs:
           foo: "bar"          
-      - objectName: "secret2"
+      - fileName: "secret2"
         secretPath: "/secret2"
 `
-	defaultVaultAddress             = "http://127.0.0.1:18888"
+	defaultAkeylessGatewayURL       = "http://127.0.0.1:18888"
 	defaultVaultKubernetesMountPath = "kubernetes"
 )
 
@@ -46,15 +46,15 @@ func TestParseParametersFromYaml(t *testing.T) {
 	require.NoError(t, err)
 
 	// This is now the form the provider receives the data in.
-	params, err := parseParameters(string(paramsBytes), defaultVaultAddress, defaultVaultKubernetesMountPath)
+	params, err := parseParameters(string(paramsBytes), defaultAkeylessGatewayURL, defaultVaultKubernetesMountPath)
 	require.NoError(t, err)
 
 	require.Equal(t, Parameters{
-		VaultAddress:             defaultVaultAddress,
+		AkeylessGatewayURL:       defaultAkeylessGatewayURL,
 		VaultKubernetesMountPath: defaultVaultKubernetesMountPath,
 		Secrets: []Secret{
 			{
-				ObjectName: "secret1",
+				FileName:   "secret1",
 				SecretPath: "/F1/F2/secret1",
 				SecretType: "StaticSecret",
 				SecretArgs: map[string]interface{}{
@@ -62,7 +62,7 @@ func TestParseParametersFromYaml(t *testing.T) {
 				},
 			},
 			{
-				ObjectName: "secret2",
+				FileName:   "secret2",
 				SecretPath: "/secret2",
 			},
 		},
@@ -73,11 +73,10 @@ func TestParseParameters(t *testing.T) {
 	// This file's contents are copied directly from a driver mount request.
 	parametersStr, err := ioutil.ReadFile(filepath.Join("testdata", "example-params-string.txt"))
 	require.NoError(t, err)
-	actual, err := parseParameters(string(parametersStr), defaultVaultAddress, defaultVaultKubernetesMountPath)
+	actual, err := parseParameters(string(parametersStr), defaultAkeylessGatewayURL, defaultVaultKubernetesMountPath)
 	require.NoError(t, err)
 	expected := Parameters{
-		VaultRoleName: "example-role",
-		VaultAddress:  "https://vault.akeyless.io",
+		AkeylessGatewayURL: "https://vault.akeyless.io",
 		Secrets: []Secret{
 			{"bar1", "/foo/bar", "", nil},
 			{"bar2", "/bar2", "", nil},
@@ -97,9 +96,8 @@ func TestParseConfig(t *testing.T) {
 	const roleName = "example-role"
 	const targetPath = "/some/path"
 	defaultParams := Parameters{
-		VaultAddress:             defaultVaultAddress,
+		AkeylessGatewayURL:       defaultAkeylessGatewayURL,
 		VaultKubernetesMountPath: defaultVaultKubernetesMountPath,
-		VaultNamespace:           "",
 		AkeylessAccessType:       "access_key",
 	}
 	for _, tc := range []struct {
@@ -121,7 +119,6 @@ func TestParseConfig(t *testing.T) {
 				FilePermission: 420,
 				Parameters: func() Parameters {
 					expected := defaultParams
-					expected.VaultRoleName = roleName
 					expected.Secrets = []Secret{
 						{"bar1", "/foo/bar", "", nil},
 					}
@@ -135,8 +132,7 @@ func TestParseConfig(t *testing.T) {
 			parameters: map[string]string{
 				"akeylessAccessType":           "aws",
 				"roleName":                     "example-role",
-				"vaultAddress":                 "my-vault-address",
-				"vaultNamespace":               "my-vault-namespace",
+				"akeylessGatewayURL":           "my-vault-address",
 				"vaultKubernetesMountPath":     "my-mount-path",
 				"KubernetesServiceAccountPath": "my-account-path",
 				"objects":                      objects,
@@ -147,9 +143,7 @@ func TestParseConfig(t *testing.T) {
 				Parameters: func() Parameters {
 					expected := defaultParams
 					expected.AkeylessAccessType = "aws"
-					expected.VaultRoleName = roleName
-					expected.VaultAddress = "my-vault-address"
-					expected.VaultNamespace = "my-vault-namespace"
+					expected.AkeylessGatewayURL = "my-vault-address"
 					expected.VaultKubernetesMountPath = "my-mount-path"
 					expected.Secrets = []Secret{
 						{"bar1", "/foo/bar", "", nil},
@@ -161,7 +155,7 @@ func TestParseConfig(t *testing.T) {
 	} {
 		parametersStr, err := json.Marshal(tc.parameters)
 		require.NoError(t, err)
-		cfg, err := Parse(string(parametersStr), tc.targetPath, "420", defaultVaultAddress, defaultVaultKubernetesMountPath)
+		cfg, err := Parse(string(parametersStr), tc.targetPath, "420", defaultAkeylessGatewayURL, defaultVaultKubernetesMountPath)
 		require.NoError(t, err, tc.name)
 		require.Equal(t, tc.expected, cfg)
 	}
@@ -191,7 +185,7 @@ func TestParseConfig_Errors(t *testing.T) {
 	} {
 		parametersStr, err := json.Marshal(tc.parameters)
 		require.NoError(t, err)
-		_, err = Parse(string(parametersStr), "/some/path", "420", defaultVaultAddress, defaultVaultKubernetesMountPath)
+		_, err = Parse(string(parametersStr), "/some/path", "420", defaultAkeylessGatewayURL, defaultVaultKubernetesMountPath)
 		require.Error(t, err, tc.name)
 	}
 }
@@ -200,9 +194,8 @@ func TestValidateConfig(t *testing.T) {
 	minimumValid := Config{
 		TargetPath: "a",
 		Parameters: Parameters{
-			VaultAddress:  defaultVaultAddress,
-			VaultRoleName: "b",
-			Secrets:       []Secret{{}},
+			AkeylessGatewayURL: defaultAkeylessGatewayURL,
+			Secrets:            []Secret{{}},
 		},
 	}
 	for _, tc := range []struct {
@@ -219,7 +212,6 @@ func TestValidateConfig(t *testing.T) {
 			name: "No role name",
 			cfg: func() Config {
 				cfg := minimumValid
-				cfg.VaultRoleName = ""
 				return cfg
 			}(),
 		},
