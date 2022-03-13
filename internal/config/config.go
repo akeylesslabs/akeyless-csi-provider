@@ -21,6 +21,7 @@ const (
 	AkeylessAccessType    = "AKEYLESS_ACCESS_TYPE"
 	AkeylessAccessID      = "AKEYLESS_ACCESS_ID"
 	AkeylessAccessKey     = "AKEYLESS_ACCESS_KEY"
+	Credentials           = "CREDENTIALS"
 	AkeylessAzureObjectID = "AKEYLESS_AZURE_OBJECT_ID"
 	AkeylessGCPAudience   = "AKEYLESS_GCP_AUDIENCE"
 	AkeylessUIDInitToken  = "AKEYLESS_UID_INIT_TOKEN"
@@ -171,6 +172,10 @@ func parseParameters(parametersStr string, defaultAkeylessGatewayURL string, def
 
 	if parameters.AkeylessAccessKey == "" {
 		parameters.AkeylessAccessKey = os.Getenv(AkeylessAccessKey)
+	}
+
+	if parameters.AkeylessAccessKey == "" {
+		parameters.AkeylessAccessKey = os.Getenv(Credentials)
 	}
 
 	if parameters.AkeylessAzureObjectID == "" {
