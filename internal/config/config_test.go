@@ -46,7 +46,7 @@ func TestParseParametersFromYaml(t *testing.T) {
 	require.NoError(t, err)
 
 	// This is now the form the provider receives the data in.
-	params, err := parseParameters(string(paramsBytes), defaultAkeylessGatewayURL, defaultVaultKubernetesMountPath)
+	params, err := parseParameters("", string(paramsBytes), defaultAkeylessGatewayURL, defaultVaultKubernetesMountPath)
 	require.NoError(t, err)
 
 	require.Equal(t, Parameters{
@@ -73,7 +73,7 @@ func TestParseParameters(t *testing.T) {
 	// This file's contents are copied directly from a driver mount request.
 	parametersStr, err := ioutil.ReadFile(filepath.Join("testdata", "example-params-string.txt"))
 	require.NoError(t, err)
-	actual, err := parseParameters(string(parametersStr), defaultAkeylessGatewayURL, defaultVaultKubernetesMountPath)
+	actual, err := parseParameters("", string(parametersStr), defaultAkeylessGatewayURL, defaultVaultKubernetesMountPath)
 	require.NoError(t, err)
 	expected := Parameters{
 		AkeylessGatewayURL: "https://vault.akeyless.io",
@@ -155,7 +155,7 @@ func TestParseConfig(t *testing.T) {
 	} {
 		parametersStr, err := json.Marshal(tc.parameters)
 		require.NoError(t, err)
-		cfg, err := Parse(string(parametersStr), tc.targetPath, "420", defaultAkeylessGatewayURL, defaultVaultKubernetesMountPath)
+		cfg, err := Parse("", string(parametersStr), tc.targetPath, "420", defaultAkeylessGatewayURL, defaultVaultKubernetesMountPath)
 		require.NoError(t, err, tc.name)
 		require.Equal(t, tc.expected, cfg)
 	}
@@ -185,7 +185,7 @@ func TestParseConfig_Errors(t *testing.T) {
 	} {
 		parametersStr, err := json.Marshal(tc.parameters)
 		require.NoError(t, err)
-		_, err = Parse(string(parametersStr), "/some/path", "420", defaultAkeylessGatewayURL, defaultVaultKubernetesMountPath)
+		_, err = Parse("", string(parametersStr), "/some/path", "420", defaultAkeylessGatewayURL, defaultVaultKubernetesMountPath)
 		require.Error(t, err, tc.name)
 	}
 }

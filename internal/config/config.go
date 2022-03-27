@@ -97,13 +97,13 @@ type Secret struct {
 	SecretArgs map[string]interface{} `yaml:"secretArgs,omitempty"`
 }
 
-func Parse(parametersStr, targetPath, permissionStr string, defaultVaultAddr string, defaultVaultKubernetesMountPath string) (Config, error) {
+func Parse(secretStr, parametersStr, targetPath, permissionStr string, defaultVaultAddr string, defaultVaultKubernetesMountPath string) (Config, error) {
 	config := Config{
 		TargetPath: targetPath,
 	}
 
 	var err error
-	config.Parameters, err = parseParameters(parametersStr, defaultVaultAddr, defaultVaultKubernetesMountPath)
+	config.Parameters, err = parseParameters(secretStr, parametersStr, defaultVaultAddr, defaultVaultKubernetesMountPath)
 	if err != nil {
 		return Config{}, err
 	}
@@ -131,9 +131,15 @@ func Parse(parametersStr, targetPath, permissionStr string, defaultVaultAddr str
 	return config, nil
 }
 
-func parseParameters(parametersStr string, defaultAkeylessGatewayURL string, defaultVaultKubernetesMountPath string) (Parameters, error) {
+func parseParameters(secretStr, parametersStr string, defaultAkeylessGatewayURL string, defaultVaultKubernetesMountPath string) (Parameters, error) {
 	var params map[string]string
 	err := json.Unmarshal([]byte(parametersStr), &params)
+	if err != nil {
+		return Parameters{}, err
+	}
+
+	var secret map[string]string
+	err = json.Unmarshal([]byte(secretStr), &secret)
 	if err != nil {
 		return Parameters{}, err
 	}
@@ -151,6 +157,10 @@ func parseParameters(parametersStr string, defaultAkeylessGatewayURL string, def
 	parameters.AkeylessAzureObjectID = params["akeylessAzureObjectID"]
 	parameters.AkeylessGCPAudience = params["akeylessGCPAudience"]
 	parameters.AkeylessUIDInitToken = params["akeylessUIDInitToken"]
+
+	if parameters.AkeylessAccessKey == "" {
+		parameters.AkeylessAccessKey = secret["akeylessAccessKey"]
+	}
 
 	secretsYaml := params["objects"]
 	err = yaml.Unmarshal([]byte(secretsYaml), &parameters.Secrets)
@@ -193,6 +203,10 @@ func parseParameters(parametersStr string, defaultAkeylessGatewayURL string, def
 	// Set default values.
 	if parameters.AkeylessGatewayURL == "" {
 		parameters.AkeylessGatewayURL = defaultAkeylessGatewayURL
+	}
+
+	if parameters.AkeylessAccessType == "" {
+		parameters.AkeylessAccessType = string(AccessKey)
 	}
 
 	if parameters.VaultKubernetesMountPath == "" {
