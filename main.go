@@ -21,7 +21,7 @@ import (
 
 func realMain() error {
 	var (
-		endpoint    = flag.String("endpoint", "/tmp/akeyless.vault.sock", "path to socket on which to listen for driver gRPC calls")
+		endpoint    = flag.String("endpoint", "/tmp/akeyless.sock", "path to socket on which to listen for driver gRPC calls")
 		selfVersion = flag.Bool("version", false, "prints the version information")
 		vaultAddr   = flag.String("akeyless-address", "https://api.akeyless.io", "Akeyless API URL")
 		vaultMount  = flag.String("mount", "kubernetes", "default mount path for Kubernetes authentication")
