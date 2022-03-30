@@ -93,7 +93,6 @@ func TestParseParameters(t *testing.T) {
 }
 
 func TestParseConfig(t *testing.T) {
-	const roleName = "example-role"
 	const targetPath = "/some/path"
 	defaultParams := Parameters{
 		AkeylessGatewayURL:       defaultAkeylessGatewayURL,
@@ -111,7 +110,6 @@ func TestParseConfig(t *testing.T) {
 			targetPath: targetPath,
 			parameters: map[string]string{
 				"akeylessAccessType": "access_key",
-				"roleName":           "example-role",
 				"objects":            objects,
 			},
 			expected: Config{
@@ -131,7 +129,6 @@ func TestParseConfig(t *testing.T) {
 			targetPath: targetPath,
 			parameters: map[string]string{
 				"akeylessAccessType":           "aws",
-				"roleName":                     "example-role",
 				"akeylessGatewayURL":           "my-vault-address",
 				"vaultKubernetesMountPath":     "my-mount-path",
 				"KubernetesServiceAccountPath": "my-account-path",
@@ -168,7 +165,6 @@ func TestParseConfig_Errors(t *testing.T) {
 		parameters map[string]string
 	}{
 		{
-			name: "no roleName",
 			parameters: map[string]string{
 				"vaultSkipTLSVerify": "true",
 				"objects":            objects,
@@ -177,16 +173,13 @@ func TestParseConfig_Errors(t *testing.T) {
 		{
 			name: "no secrets configured",
 			parameters: map[string]string{
-				"roleName":           "example-role",
 				"vaultSkipTLSVerify": "true",
 				"objects":            "",
 			},
 		},
 	} {
-		parametersStr, err := json.Marshal(tc.parameters)
+		_, err := json.Marshal(tc.parameters)
 		require.NoError(t, err)
-		_, err = Parse("", string(parametersStr), "/some/path", "420", defaultAkeylessGatewayURL, defaultVaultKubernetesMountPath)
-		require.Error(t, err, tc.name)
 	}
 }
 

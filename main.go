@@ -46,7 +46,11 @@ func realMain() error {
 			startTime := time.Now()
 			log.Printf("Processing unary gRPC call grpc.method: %v", info.FullMethod)
 			resp, err := handler(ctx, req)
-			log.Printf("Finished unary gRPC call grpc.method: %v, grpc.time: %v, grpc.code: %v, err: %v", info.FullMethod, time.Since(startTime), status.Code(err), err.Error())
+			log.Printf("Finished unary gRPC call grpc.method: %v, grpc.time: %v, grpc.code: %v", info.FullMethod, time.Since(startTime), status.Code(err))
+			if err != nil {
+				log.Printf("Error: %v", err.Error())
+			}
+			log.Print("Finished unary gRPC call")
 			return resp, err
 		}),
 	)

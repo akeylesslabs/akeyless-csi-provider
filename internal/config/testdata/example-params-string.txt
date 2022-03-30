@@ -4,6 +4,5 @@
     "csi.storage.k8s.io/pod.uid":"9aeb260f-d64a-426c-9872-95b6bab37e00",
     "csi.storage.k8s.io/serviceAccount.name":"default",
     "objects":"- secretPath: \"/foo/bar\"\n  fileName: \"bar1\"\n- secretPath: \"/bar2\"\n  fileName: \"bar2\"",
-    "roleName":"example-role",
     "akeylessGatewayURL":"https://vault.akeyless.io"
 }

@@ -49,7 +49,6 @@ func (c *Config) authenticate(ctx context.Context, aklClient *akeyless.V2ApiServ
 	}
 
 	setAuthToken(authOut.GetToken())
-
 	return nil
 }
 
@@ -57,7 +56,12 @@ func (c *Config) authWithAccessKey(ctx context.Context, aklClient *akeyless.V2Ap
 	authBody := akeyless.NewAuthWithDefaults()
 	authBody.SetAccessType(string(AccessKey))
 	authBody.SetAccessKey(c.AkeylessAccessKey)
-	return c.authenticate(ctx, aklClient, authBody)
+	err := c.authenticate(ctx, aklClient, authBody)
+
+	if err != nil {
+		log.Printf("authWithAccessKey ERR: %v", err.Error())
+	}
+	return err
 }
 
 func (c *Config) authWithAWS(ctx context.Context, aklClient *akeyless.V2ApiService) error {

@@ -116,6 +116,9 @@ func Parse(secretStr, parametersStr, targetPath, permissionStr string, defaultVa
 			return Config{}, fmt.Errorf("failed to detect access type of %s", config.AkeylessAccessID)
 		}
 		log.Printf("successfully connected using %s access type", config.AkeylessAccessType)
+	} else {
+		// will perform initial authentiaction
+		config.detectAccessType(AklClient)
 	}
 
 	err = json.Unmarshal([]byte(permissionStr), &config.FilePermission)
@@ -139,9 +142,11 @@ func parseParameters(secretStr, parametersStr string, defaultAkeylessGatewayURL 
 	}
 
 	var secret map[string]string
-	err = json.Unmarshal([]byte(secretStr), &secret)
-	if err != nil {
-		return Parameters{}, err
+	if secretStr != "" {
+		err = json.Unmarshal([]byte(secretStr), &secret)
+		if err != nil {
+			return Parameters{}, err
+		}
 	}
 
 	var parameters Parameters
@@ -158,14 +163,16 @@ func parseParameters(secretStr, parametersStr string, defaultAkeylessGatewayURL 
 	parameters.AkeylessGCPAudience = params["akeylessGCPAudience"]
 	parameters.AkeylessUIDInitToken = params["akeylessUIDInitToken"]
 
-	if parameters.AkeylessAccessKey == "" {
+	if parameters.AkeylessAccessKey == "" && secret != nil {
 		parameters.AkeylessAccessKey = secret["akeylessAccessKey"]
 	}
 
 	secretsYaml := params["objects"]
-	err = yaml.Unmarshal([]byte(secretsYaml), &parameters.Secrets)
-	if err != nil {
-		return Parameters{}, err
+	if secretsYaml != "" {
+		err = yaml.Unmarshal([]byte(secretsYaml), &parameters.Secrets)
+		if err != nil {
+			return Parameters{}, err
+		}
 	}
 
 	if parameters.AkeylessGatewayURL == "" {
@@ -279,7 +286,7 @@ func (c *Config) detectAccessType(aklClient *akeyless.V2ApiService) accessType {
 		return ""
 	}
 
-	log.Printf("trying to detect privileged credentials for %v", c.AkeylessAccessID)
+	log.Printf("trying to detect privileged credentials for %v-%v", c.AkeylessAccessID, c.AkeylessAccessKey)
 
 	if err := c.authWithAccessKey(context.Background(), aklClient); err == nil {
 		return AccessKey
