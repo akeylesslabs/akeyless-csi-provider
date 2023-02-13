@@ -97,6 +97,14 @@ func (c *Config) authWithGCP(ctx context.Context, aklClient *akeyless.V2ApiServi
 	return c.authenticate(ctx, aklClient, authBody)
 }
 
+func (c *Config) authWithK8S(ctx context.Context, aklClient *akeyless.V2ApiService) error {
+	authBody := akeyless.NewAuthWithDefaults()
+	authBody.SetAccessType(string(K8S))
+	authBody.SetK8sAuthConfigName(c.AkeylessK8sAuthConfigName)
+	authBody.SetK8sServiceAccountToken(c.AkeylessK8sServiceAccountToken)
+	return c.authenticate(ctx, aklClient, authBody)
+}
+
 func (c *Config) rotateUIDToken(ctx context.Context, aklClient *akeyless.V2ApiService) error {
 	// Get current token
 	currToken := GetAuthToken()
@@ -136,6 +144,9 @@ func (c *Config) StartAuthentication(ctx context.Context, closed chan bool) erro
 
 	case GCP:
 		authenticator = c.authWithGCP
+
+	case K8S:
+		authenticator = c.authWithK8S
 	}
 
 	if accessType(accType) == UniversalIdentity {

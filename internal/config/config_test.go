@@ -52,6 +52,7 @@ func TestParseParametersFromYaml(t *testing.T) {
 	require.Equal(t, Parameters{
 		AkeylessGatewayURL:       defaultAkeylessGatewayURL,
 		VaultKubernetesMountPath: defaultVaultKubernetesMountPath,
+		AkeylessAccessType:       "access_key",
 		Secrets: []Secret{
 			{
 				FileName:   "secret1",
@@ -77,6 +78,7 @@ func TestParseParameters(t *testing.T) {
 	require.NoError(t, err)
 	expected := Parameters{
 		AkeylessGatewayURL: "https://vault.akeyless.io",
+		AkeylessAccessType: "access_key",
 		Secrets: []Secret{
 			{"bar1", "/foo/bar", "", nil},
 			{"bar2", "/bar2", "", nil},
@@ -128,7 +130,7 @@ func TestParseConfig(t *testing.T) {
 			name:       "non-defaults can be set",
 			targetPath: targetPath,
 			parameters: map[string]string{
-				"akeylessAccessType":           "aws",
+				"c":                            "aws",
 				"akeylessGatewayURL":           "my-vault-address",
 				"vaultKubernetesMountPath":     "my-mount-path",
 				"KubernetesServiceAccountPath": "my-account-path",

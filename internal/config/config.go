@@ -17,14 +17,16 @@ import (
 )
 
 const (
-	AkeylessURL           = "AKEYLESS_URL"
-	AkeylessAccessType    = "AKEYLESS_ACCESS_TYPE"
-	AkeylessAccessID      = "AKEYLESS_ACCESS_ID"
-	AkeylessAccessKey     = "AKEYLESS_ACCESS_KEY"
-	Credentials           = "CREDENTIALS"
-	AkeylessAzureObjectID = "AKEYLESS_AZURE_OBJECT_ID"
-	AkeylessGCPAudience   = "AKEYLESS_GCP_AUDIENCE"
-	AkeylessUIDInitToken  = "AKEYLESS_UID_INIT_TOKEN"
+	AkeylessURL                    = "AKEYLESS_URL"
+	AkeylessAccessType             = "AKEYLESS_ACCESS_TYPE"
+	AkeylessAccessID               = "AKEYLESS_ACCESS_ID"
+	AkeylessAccessKey              = "AKEYLESS_ACCESS_KEY"
+	Credentials                    = "CREDENTIALS"
+	AkeylessAzureObjectID          = "AKEYLESS_AZURE_OBJECT_ID"
+	AkeylessGCPAudience            = "AKEYLESS_GCP_AUDIENCE"
+	AkeylessUIDInitToken           = "AKEYLESS_UID_INIT_TOKEN"
+	AkeylessK8sServiceAccountToken = "AKEYLESS_K8S_ACCOUNT_TOKEN"
+	AkeylessK8sAuthConfigName      = "AKEYLESS_K8S_AUTH_CONFIG_NAME"
 )
 
 type accessType string
@@ -35,6 +37,7 @@ const (
 	AzureAD           accessType = "azure_ad"
 	GCP               accessType = "gcp"
 	UniversalIdentity accessType = "universal_identity"
+	K8S               accessType = "k8s"
 )
 
 var (
@@ -66,12 +69,14 @@ type Parameters struct {
 	Secrets                  []Secret
 	PodInfo                  PodInfo
 
-	AkeylessAccessType    string
-	AkeylessAccessID      string
-	AkeylessAccessKey     string
-	AkeylessAzureObjectID string
-	AkeylessGCPAudience   string
-	AkeylessUIDInitToken  string
+	AkeylessAccessType             string
+	AkeylessAccessID               string
+	AkeylessAccessKey              string
+	AkeylessAzureObjectID          string
+	AkeylessGCPAudience            string
+	AkeylessUIDInitToken           string
+	AkeylessK8sServiceAccountToken string
+	AkeylessK8sAuthConfigName      string
 }
 
 type TLSConfig struct {
@@ -162,6 +167,8 @@ func parseParameters(secretStr, parametersStr string, defaultAkeylessGatewayURL 
 	parameters.AkeylessAzureObjectID = params["akeylessAzureObjectID"]
 	parameters.AkeylessGCPAudience = params["akeylessGCPAudience"]
 	parameters.AkeylessUIDInitToken = params["akeylessUIDInitToken"]
+	parameters.AkeylessK8sServiceAccountToken = params["akeylessK8sServiceAccountToken"]
+	parameters.AkeylessK8sAuthConfigName = params["akeylessK8sAuthConfigName"]
 
 	if parameters.AkeylessAccessKey == "" && secret != nil {
 		parameters.AkeylessAccessKey = secret["akeylessAccessKey"]
@@ -207,6 +214,14 @@ func parseParameters(secretStr, parametersStr string, defaultAkeylessGatewayURL 
 		parameters.AkeylessUIDInitToken = os.Getenv(AkeylessUIDInitToken)
 	}
 
+	if parameters.AkeylessK8sServiceAccountToken == "" {
+		parameters.AkeylessK8sServiceAccountToken = os.Getenv(AkeylessK8sServiceAccountToken)
+	}
+
+	if parameters.AkeylessK8sAuthConfigName == "" {
+		parameters.AkeylessK8sAuthConfigName = os.Getenv(AkeylessK8sAuthConfigName)
+	}
+
 	// Set default values.
 	if parameters.AkeylessGatewayURL == "" {
 		parameters.AkeylessGatewayURL = defaultAkeylessGatewayURL
@@ -241,6 +256,10 @@ func (c *Config) UsingGCP() bool {
 
 func (c *Config) UsingUID() bool {
 	return accessType(c.AkeylessAccessType) == UniversalIdentity
+}
+
+func (c *Config) UsingK8S() bool {
+	return accessType(c.AkeylessAccessType) == K8S
 }
 
 func (c *Config) validate() error {
@@ -302,6 +321,10 @@ func (c *Config) detectAccessType(aklClient *akeyless.V2ApiService) accessType {
 
 	if err := c.authWithGCP(context.Background(), aklClient); err == nil {
 		return GCP
+	}
+
+	if err := c.authWithK8S(context.Background(), aklClient); err == nil {
+		return K8S
 	}
 
 	setAuthToken(c.AkeylessUIDInitToken)
