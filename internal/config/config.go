@@ -305,7 +305,7 @@ func (c *Config) detectAccessType(aklClient *akeyless.V2ApiService) accessType {
 		return ""
 	}
 
-	log.Printf("trying to detect privileged credentials for %v-%v", c.AkeylessAccessID, c.AkeylessAccessKey)
+	log.Printf("trying to detect privileged credentials for %v", c.AkeylessAccessID)
 
 	if err := c.authWithAccessKey(context.Background(), aklClient); err == nil {
 		return AccessKey
