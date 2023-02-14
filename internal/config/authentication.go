@@ -3,21 +3,26 @@ package config
 import (
 	"context"
 	"fmt"
+	"io/ioutil"
 	"log"
+	"os"
 	"reflect"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
 
+	encoding_ex "akeyless.io/akeyless-main-repo/go/src/infra/encoding-ex"
 	"github.com/akeylesslabs/akeyless-go-cloud-id/cloudprovider/aws"
 	"github.com/akeylesslabs/akeyless-go-cloud-id/cloudprovider/azure"
 	"github.com/akeylesslabs/akeyless-go-cloud-id/cloudprovider/gcp"
-	"github.com/akeylesslabs/akeyless-go/v2"
+	"github.com/akeylesslabs/akeyless-go/v3"
 )
 
 const (
 	authenticationInterval   = time.Second * 870 // 14.5 minutes - Relevant only for non-UID authentications
 	uidTokenRotationInterval = time.Second * 120
+	DefServiceAccountFile    = "/var/run/secrets/kubernetes.io/serviceaccount/token"
 )
 
 var (
@@ -72,7 +77,12 @@ func (c *Config) authWithAWS(ctx context.Context, aklClient *akeyless.V2ApiServi
 		return fmt.Errorf("requested access type %v but failed to get cloud ID, error: %v", AWSIAM, err)
 	}
 	authBody.SetCloudId(cloudId)
-	return c.authenticate(ctx, aklClient, authBody)
+	err = c.authenticate(ctx, aklClient, authBody)
+
+	if err != nil {
+		log.Printf("authWithAWS ERR: %v", err.Error())
+	}
+	return err
 }
 
 func (c *Config) authWithAzure(ctx context.Context, aklClient *akeyless.V2ApiService) error {
@@ -83,7 +93,12 @@ func (c *Config) authWithAzure(ctx context.Context, aklClient *akeyless.V2ApiSer
 		return fmt.Errorf("requested access type %v but failed to get cloud ID, error: %v", AzureAD, err)
 	}
 	authBody.SetCloudId(cloudId)
-	return c.authenticate(ctx, aklClient, authBody)
+	err = c.authenticate(ctx, aklClient, authBody)
+
+	if err != nil {
+		log.Printf("authWithAzure ERR: %v", err.Error())
+	}
+	return err
 }
 
 func (c *Config) authWithGCP(ctx context.Context, aklClient *akeyless.V2ApiService) error {
@@ -94,15 +109,29 @@ func (c *Config) authWithGCP(ctx context.Context, aklClient *akeyless.V2ApiServi
 		return fmt.Errorf("requested access type %v but failed to get cloud ID, error: %v", GCP, err)
 	}
 	authBody.SetCloudId(cloudId)
-	return c.authenticate(ctx, aklClient, authBody)
+	err = c.authenticate(ctx, aklClient, authBody)
+
+	if err != nil {
+		log.Printf("authWithGCP ERR: %v", err.Error())
+	}
+	return err
 }
 
 func (c *Config) authWithK8S(ctx context.Context, aklClient *akeyless.V2ApiService) error {
 	authBody := akeyless.NewAuthWithDefaults()
 	authBody.SetAccessType(string(K8S))
 	authBody.SetK8sAuthConfigName(c.AkeylessK8sAuthConfigName)
-	authBody.SetK8sServiceAccountToken(c.AkeylessK8sServiceAccountToken)
-	return c.authenticate(ctx, aklClient, authBody)
+	jwtString, err := readK8SServiceAccountJWT()
+	if err != nil {
+		return fmt.Errorf("failed to read JWT with Kubernetes Auth from %v. error: %v", DefServiceAccountFile, err.Error())
+	}
+	authBody.SetK8sServiceAccountToken(jwtString)
+	err = c.authenticate(ctx, aklClient, authBody)
+
+	if err != nil {
+		log.Printf("authWithK8s ERR: %v", err.Error())
+	}
+	return err
 }
 
 func (c *Config) rotateUIDToken(ctx context.Context, aklClient *akeyless.V2ApiService) error {
@@ -127,6 +156,24 @@ func (c *Config) rotateUIDToken(ctx context.Context, aklClient *akeyless.V2ApiSe
 	setAuthToken(newToken)
 	log.Println("successfully rotated UID token")
 	return nil
+}
+
+// readK8SServiceAccountJWT reads the JWT data for the Agent to submit to Akeyless Gateway.
+func readK8SServiceAccountJWT() (string, error) {
+	data, err := os.Open(DefServiceAccountFile)
+	if err != nil {
+		return "", err
+	}
+	defer data.Close()
+
+	contentBytes, err := ioutil.ReadAll(data)
+	if err != nil {
+		return "", err
+	}
+
+	a := strings.TrimSpace(string(contentBytes))
+
+	return encoding_ex.Base64Encode([]byte(a)), nil
 }
 
 func (c *Config) StartAuthentication(ctx context.Context, closed chan bool) error {
