@@ -130,7 +130,7 @@ func TestParseConfig(t *testing.T) {
 			name:       "non-defaults can be set",
 			targetPath: targetPath,
 			parameters: map[string]string{
-				"c":                            "aws",
+				"akeylessAccessType":           "aws",
 				"akeylessGatewayURL":           "my-vault-address",
 				"vaultKubernetesMountPath":     "my-mount-path",
 				"KubernetesServiceAccountPath": "my-account-path",
