@@ -17,16 +17,15 @@ import (
 )
 
 const (
-	AkeylessURL                    = "AKEYLESS_URL"
-	AkeylessAccessType             = "AKEYLESS_ACCESS_TYPE"
-	AkeylessAccessID               = "AKEYLESS_ACCESS_ID"
-	AkeylessAccessKey              = "AKEYLESS_ACCESS_KEY"
-	Credentials                    = "CREDENTIALS"
-	AkeylessAzureObjectID          = "AKEYLESS_AZURE_OBJECT_ID"
-	AkeylessGCPAudience            = "AKEYLESS_GCP_AUDIENCE"
-	AkeylessUIDInitToken           = "AKEYLESS_UID_INIT_TOKEN"
-	AkeylessK8sServiceAccountToken = "AKEYLESS_K8S_ACCOUNT_TOKEN"
-	AkeylessK8sAuthConfigName      = "AKEYLESS_K8S_AUTH_CONFIG_NAME"
+	AkeylessURL               = "AKEYLESS_URL"
+	AkeylessAccessType        = "AKEYLESS_ACCESS_TYPE"
+	AkeylessAccessID          = "AKEYLESS_ACCESS_ID"
+	AkeylessAccessKey         = "AKEYLESS_ACCESS_KEY"
+	Credentials               = "CREDENTIALS"
+	AkeylessAzureObjectID     = "AKEYLESS_AZURE_OBJECT_ID"
+	AkeylessGCPAudience       = "AKEYLESS_GCP_AUDIENCE"
+	AkeylessUIDInitToken      = "AKEYLESS_UID_INIT_TOKEN"
+	AkeylessK8sAuthConfigName = "AKEYLESS_K8S_AUTH_CONFIG_NAME"
 )
 
 type accessType string
