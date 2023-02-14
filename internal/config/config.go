@@ -69,14 +69,13 @@ type Parameters struct {
 	Secrets                  []Secret
 	PodInfo                  PodInfo
 
-	AkeylessAccessType             string
-	AkeylessAccessID               string
-	AkeylessAccessKey              string
-	AkeylessAzureObjectID          string
-	AkeylessGCPAudience            string
-	AkeylessUIDInitToken           string
-	AkeylessK8sServiceAccountToken string
-	AkeylessK8sAuthConfigName      string
+	AkeylessAccessType        string
+	AkeylessAccessID          string
+	AkeylessAccessKey         string
+	AkeylessAzureObjectID     string
+	AkeylessGCPAudience       string
+	AkeylessUIDInitToken      string
+	AkeylessK8sAuthConfigName string
 }
 
 type TLSConfig struct {
@@ -167,7 +166,6 @@ func parseParameters(secretStr, parametersStr string, defaultAkeylessGatewayURL 
 	parameters.AkeylessAzureObjectID = params["akeylessAzureObjectID"]
 	parameters.AkeylessGCPAudience = params["akeylessGCPAudience"]
 	parameters.AkeylessUIDInitToken = params["akeylessUIDInitToken"]
-	parameters.AkeylessK8sServiceAccountToken = params["akeylessK8sServiceAccountToken"]
 	parameters.AkeylessK8sAuthConfigName = params["akeylessK8sAuthConfigName"]
 
 	if parameters.AkeylessAccessKey == "" && secret != nil {
@@ -212,10 +210,6 @@ func parseParameters(secretStr, parametersStr string, defaultAkeylessGatewayURL 
 
 	if parameters.AkeylessUIDInitToken == "" {
 		parameters.AkeylessUIDInitToken = os.Getenv(AkeylessUIDInitToken)
-	}
-
-	if parameters.AkeylessK8sServiceAccountToken == "" {
-		parameters.AkeylessK8sServiceAccountToken = os.Getenv(AkeylessK8sServiceAccountToken)
 	}
 
 	if parameters.AkeylessK8sAuthConfigName == "" {
