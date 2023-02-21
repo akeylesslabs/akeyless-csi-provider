@@ -3,11 +3,11 @@ package provider
 import (
 	"context"
 	"fmt"
+	"github.com/akeylesslabs/akeyless-go/v3"
 	"log"
 	"time"
 
 	"github.com/akeylesslabs/akeyless-csi-provider/internal/config"
-	"github.com/akeylesslabs/akeyless-go/v2"
 	pb "sigs.k8s.io/secrets-store-csi-driver/provider/v1alpha1"
 )
 
