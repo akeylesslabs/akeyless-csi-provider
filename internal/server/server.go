@@ -44,8 +44,8 @@ func (p *Server) Mount(ctx context.Context, req *pb.MountRequest) (*pb.MountResp
 		return nil, err
 	}
 
-	provider := provider.NewProvider()
-	resp, err := provider.HandleMountRequest(ctx, cfg)
+	prov := provider.NewProvider()
+	resp, err := prov.HandleMountRequest(ctx, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("error making mount request: %w", err)
 	}

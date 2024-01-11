@@ -61,7 +61,7 @@ type Config struct {
 // they are defined as literal string types:
 // https://github.com/kubernetes-sigs/secrets-store-csi-driver/blob/0ba9810d41cc2dc336c68251d45ebac19f2e7f28/apis/v1alpha1/secretproviderclass_types.go#L59
 //
-// So we just deserialise by hand to avoid complexity and two passes.
+// So we just deserialize by hand to avoid complexity and two passes.
 type Parameters struct {
 	AkeylessGatewayURL       string
 	VaultKubernetesMountPath string
@@ -96,7 +96,7 @@ type PodInfo struct {
 type Secret struct {
 	FileName   string                 `yaml:"fileName,omitempty"`
 	SecretPath string                 `yaml:"secretPath,omitempty"`
-	SecretType string                 `yaml:"secretType,omitempty"`
+	SecretType string                 `yaml:"secretType,omitempty"` // Deprecated, will be ignored
 	SecretArgs map[string]interface{} `yaml:"secretArgs,omitempty"`
 }
 
