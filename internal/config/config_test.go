@@ -22,7 +22,6 @@ spec:
     objects: |
       - fileName: "secret1"
         secretPath: "/F1/F2/secret1"
-        secretType: "StaticSecret"
         secretArgs:
           foo: "bar"          
       - fileName: "secret2"
@@ -57,7 +56,6 @@ func TestParseParametersFromYaml(t *testing.T) {
 			{
 				FileName:   "secret1",
 				SecretPath: "/F1/F2/secret1",
-				SecretType: "StaticSecret",
 				SecretArgs: map[string]interface{}{
 					"foo": "bar",
 				},

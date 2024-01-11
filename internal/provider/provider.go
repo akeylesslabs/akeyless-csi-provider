@@ -2,6 +2,8 @@ package provider
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/akeylesslabs/akeyless-go/v3"
 	"log"
@@ -11,39 +13,35 @@ import (
 	pb "sigs.k8s.io/secrets-store-csi-driver/provider/v1alpha1"
 )
 
-// provider implements the secrets-store-csi-driver provider interface and communicates with the Akeyless
+var apiErr akeyless.GenericOpenAPIError
+
+// Provider implements the secrets-store-csi-driver Provider interface and communicates with the Akeyless
 type cacheEntity struct {
 	EntryTime time.Time
 	FileName  string
 	Value     string
 }
-type provider struct {
-	cache map[string]*cacheEntity
+type Provider struct {
+	cache    map[string]*cacheEntity
+	versions map[string]string
 }
 
-func NewProvider() *provider {
-	p := &provider{
+type Item struct {
+	ItemName    string `json:"item_name"`
+	ItemType    string `json:"item_type"`
+	LastVersion int32  `json:"last_version"`
+}
+
+func NewProvider() *Provider {
+	p := &Provider{
 		cache: make(map[string]*cacheEntity),
 	}
 	return p
 }
 
-func (p *provider) loadSecrets(ctx context.Context, body akeyless.GetSecretValue) {
-	secrets, _, err := config.AklClient.GetSecretValue(ctx).Body(body).Execute()
-	if err != nil {
-		log.Fatalf("Failed to get secret %v: %v", body.Names[0], err.Error())
-		return
-	}
+func (p *Provider) loadItems(ctx context.Context, cfg config.Config) {
 
-	for k, v := range secrets {
-		p.cache[k].Value = v
-		p.cache[k].EntryTime = time.Now()
-	}
-}
-
-// MountSecretsStoreObjectContent mounts content of the vault object to target path
-func (p *provider) HandleMountRequest(ctx context.Context, cfg config.Config) (*pb.MountResponse, error) {
-	versions := make(map[string]string)
+	p.versions = make(map[string]string)
 
 	body := akeyless.GetSecretValue{}
 	if cfg.UsingUID() {
@@ -52,26 +50,134 @@ func (p *provider) HandleMountRequest(ctx context.Context, cfg config.Config) (*
 		body.SetToken(config.GetAuthToken())
 	}
 
-	var files []*pb.File
-	var names []string
 	for _, secret := range cfg.Parameters.Secrets {
-		versions[fmt.Sprintf("%s:%s", secret.FileName, secret.SecretPath)] = "0"
+		secVal, err := p.GetSecretByType(ctx, secret.SecretPath, cfg)
+		if err != nil {
+			log.Fatalf(err.Error())
+			return
+		}
+		p.versions[fmt.Sprintf("%s:%s", secret.FileName, secret.SecretPath)] = "0"
 		ce, ok := p.cache[secret.SecretPath]
 		if !ok || ce == nil || time.Now().Sub(ce.EntryTime) > time.Minute*5 {
-			names = append(names, secret.SecretPath)
 			p.cache[secret.SecretPath] = &cacheEntity{FileName: secret.FileName}
 		}
+		p.cache[secret.SecretPath].Value = secVal
+		p.cache[secret.SecretPath].EntryTime = time.Now()
 	}
-	body.SetNames(names)
-	p.loadSecrets(ctx, body)
+}
 
+func (p *Provider) GetSecretByType(ctx context.Context, itemName string, cfg config.Config) (string, error) {
+	item, err := p.DescribeItem(ctx, itemName, cfg)
+	if err != nil {
+		return "", err
+	}
+	secretType := item.GetItemType()
+
+	switch secretType {
+	case "STATIC_SECRET":
+		return p.GetStaticSecret(ctx, item.GetItemName(), cfg)
+	case "CERTIFICATE":
+		return p.GetCertificate(ctx, item.GetItemName(), cfg)
+	default:
+		return "", fmt.Errorf("unsupported item type %s for secret %s", secretType, itemName)
+	}
+}
+
+func (p *Provider) DescribeItem(ctx context.Context, itemName string, cfg config.Config) (*akeyless.Item, error) {
+	body := akeyless.DescribeItem{
+		Name: itemName,
+	}
+
+	if cfg.UsingUID() {
+		body.SetUidToken(config.GetAuthToken())
+	} else {
+		body.SetToken(config.GetAuthToken())
+	}
+
+	gsvOut, res, err := config.AklClient.DescribeItem(ctx).Body(body).Execute()
+	if err != nil {
+		if errors.As(err, &apiErr) {
+			var item *Item
+			err = json.Unmarshal(apiErr.Body(), &item)
+			if err != nil {
+				return nil, fmt.Errorf("can't describe item: %v, error: %v", itemName, string(apiErr.Body()))
+			}
+		} else {
+			return nil, fmt.Errorf("can't describe item: %w", err)
+		}
+	}
+	defer res.Body.Close()
+
+	return &gsvOut, nil
+}
+
+func (p *Provider) GetCertificate(ctx context.Context, itemName string, cfg config.Config) (string, error) {
+	body := akeyless.GetCertificateValue{
+		Name: itemName,
+	}
+
+	if cfg.UsingUID() {
+		body.SetUidToken(config.GetAuthToken())
+	} else {
+		body.SetToken(config.GetAuthToken())
+	}
+
+	gcvOut, res, err := config.AklClient.GetCertificateValue(ctx).Body(body).Execute()
+	if err != nil {
+		if errors.As(err, &apiErr) {
+			return "", fmt.Errorf("can't get certificate value: %v", string(apiErr.Body()))
+		}
+		return "", fmt.Errorf("can't get certificate value: %w", err)
+	}
+	defer res.Body.Close()
+
+	out, err := json.Marshal(gcvOut)
+	if err != nil {
+		return "", fmt.Errorf("can't marshal certificate value: %w", err)
+	}
+
+	return string(out), nil
+}
+
+func (p *Provider) GetStaticSecret(ctx context.Context, itemName string, cfg config.Config) (string, error) {
+	body := akeyless.GetSecretValue{
+		Names: []string{itemName},
+	}
+
+	if cfg.UsingUID() {
+		body.SetUidToken(config.GetAuthToken())
+	} else {
+		body.SetToken(config.GetAuthToken())
+	}
+
+	gsvOut, res, err := config.AklClient.GetSecretValue(ctx).Body(body).Execute()
+	if err != nil {
+		if errors.As(err, &apiErr) {
+			return "", fmt.Errorf("can't get secret value: %v", string(apiErr.Body()))
+		}
+		return "", fmt.Errorf("can't get secret value: %w", err)
+	}
+	defer res.Body.Close()
+	val, ok := gsvOut[itemName]
+	if !ok {
+		return "", fmt.Errorf("can't get secret: %v", itemName)
+	}
+
+	return val, nil
+}
+
+// HandleMountRequest mounts content of the vault object to target path
+func (p *Provider) HandleMountRequest(ctx context.Context, cfg config.Config) (*pb.MountResponse, error) {
+	p.loadItems(ctx, cfg)
+
+	var files []*pb.File
 	for name, value := range p.cache {
 		files = append(files, &pb.File{Path: value.FileName, Mode: int32(cfg.FilePermission), Contents: []byte(value.Value)})
 		log.Printf("secret added to mount response, directory: %v, file: %v", cfg.TargetPath, name)
 	}
 
 	var ov []*pb.ObjectVersion
-	for k, v := range versions {
+	for k, v := range p.versions {
 		ov = append(ov, &pb.ObjectVersion{Id: k, Version: v})
 	}
 

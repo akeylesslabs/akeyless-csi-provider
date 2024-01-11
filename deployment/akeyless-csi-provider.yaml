@@ -1,4 +1,9 @@
 apiVersion: v1
+kind: Namespace
+metadata:
+  name: csi
+---
+apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: akeyless-csi-provider
@@ -51,10 +56,10 @@ spec:
       tolerations:
       containers:
         - name: provider-akeyless-installer
-          image: akeyless/akeyless-csi-provider:latest
-          imagePullPolicy: Always
+          image: akeyless/akeyless-csi-drive-provider:latest
+          imagePullPolicy: IfNotPresent
           args:
-            - -endpoint=/provider/akeyless.sock            
+            - -endpoint=/provider/akeyless.sock
           resources:
             requests:
               cpu: 50m
@@ -90,4 +95,4 @@ spec:
           hostPath:
             path: "/etc/kubernetes/secrets-store-csi-providers"
       nodeSelector:
-        beta.kubernetes.io/os: linux
+        kubernetes.io/os: linux
