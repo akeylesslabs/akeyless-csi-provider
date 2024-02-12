@@ -4,7 +4,7 @@ on:
   push:
     branches: [ "or-appsec" ]
   pull_request:
-    branches: [ ""or-appsec" ]
+    branches: [ "or-appsec" ]
   schedule:
     - cron: '15 17 * * 4'
 
