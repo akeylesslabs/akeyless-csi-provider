@@ -4,10 +4,7 @@ go 1.21
 
 toolchain go1.21.5
 
-replace akeyless.io/akeyless-main-repo => ../akeyless-main-repo
-
 require (
-	akeyless.io/akeyless-main-repo v0.0.0-00010101000000-000000000000
 	github.com/akeylesslabs/akeyless-go-cloud-id v0.3.4
 	github.com/akeylesslabs/akeyless-go/v4 v4.0.0
 	github.com/stretchr/testify v1.8.4
