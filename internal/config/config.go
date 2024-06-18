@@ -5,13 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/akeylesslabs/akeyless-go/v4"
 	"log"
 	"net"
 	"net/http"
 	"os"
 	"time"
 
-	"github.com/akeylesslabs/akeyless-go/v3"
 	"gopkg.in/yaml.v3"
 	"k8s.io/apimachinery/pkg/types"
 )

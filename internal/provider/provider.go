@@ -5,8 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/akeylesslabs/akeyless-go/v3"
+	"github.com/akeylesslabs/akeyless-go/v4"
 	"log"
+	"strconv"
 	"time"
 
 	"github.com/akeylesslabs/akeyless-csi-provider/internal/config"
@@ -51,12 +52,12 @@ func (p *Provider) loadItems(ctx context.Context, cfg config.Config) {
 	}
 
 	for _, secret := range cfg.Parameters.Secrets {
-		secVal, err := p.GetSecretByType(ctx, secret.SecretPath, cfg)
+		version, secVal, err := p.GetSecretByType(ctx, secret.SecretPath, cfg)
 		if err != nil {
 			log.Fatalf(err.Error())
 			return
 		}
-		p.versions[fmt.Sprintf("%s:%s", secret.FileName, secret.SecretPath)] = "0"
+		p.versions[fmt.Sprintf("%s:%s", secret.FileName, secret.SecretPath)] = strconv.Itoa(int(version))
 		ce, ok := p.cache[secret.SecretPath]
 		if !ok || ce == nil || time.Now().Sub(ce.EntryTime) > time.Minute*5 {
 			p.cache[secret.SecretPath] = &cacheEntity{FileName: secret.FileName}
@@ -66,21 +67,26 @@ func (p *Provider) loadItems(ctx context.Context, cfg config.Config) {
 	}
 }
 
-func (p *Provider) GetSecretByType(ctx context.Context, itemName string, cfg config.Config) (string, error) {
+func (p *Provider) GetSecretByType(ctx context.Context, itemName string, cfg config.Config) (int32, string, error) {
 	item, err := p.DescribeItem(ctx, itemName, cfg)
 	if err != nil {
-		return "", err
+		return 0, "", err
 	}
+	version := item.GetLastVersion()
 	secretType := item.GetItemType()
 
+	var secret string
 	switch secretType {
 	case "STATIC_SECRET":
-		return p.GetStaticSecret(ctx, item.GetItemName(), cfg)
+		secret, err = p.GetStaticSecret(ctx, item.GetItemName(), cfg)
 	case "CERTIFICATE":
-		return p.GetCertificate(ctx, item.GetItemName(), cfg)
+		secret, err = p.GetCertificate(ctx, item.GetItemName(), cfg)
+	case "ROTATED_SECRET":
+		secret, err = p.GetRotatedSecret(ctx, item.GetItemName(), cfg)
 	default:
-		return "", fmt.Errorf("unsupported item type %s for secret %s", secretType, itemName)
+		return 0, "", fmt.Errorf("unsupported item type %s for secret %s", secretType, itemName)
 	}
+	return version, secret, err
 }
 
 func (p *Provider) DescribeItem(ctx context.Context, itemName string, cfg config.Config) (*akeyless.Item, error) {
@@ -163,7 +169,7 @@ func (p *Provider) GetStaticSecret(ctx context.Context, itemName string, cfg con
 		return "", fmt.Errorf("can't get secret: %v", itemName)
 	}
 
-	return val, nil
+	return val.(string), nil
 }
 
 // HandleMountRequest mounts content of the vault object to target path
@@ -185,4 +191,35 @@ func (p *Provider) HandleMountRequest(ctx context.Context, cfg config.Config) (*
 		ObjectVersion: ov,
 		Files:         files,
 	}, nil
+}
+
+func (p *Provider) GetRotatedSecret(ctx context.Context, itemName string, cfg config.Config) (string, error) {
+	body := akeyless.GetRotatedSecretValue{
+		Names: itemName,
+	}
+	body.SetJson(true)
+	if cfg.UsingUID() {
+		body.SetUidToken(config.GetAuthToken())
+	} else {
+		body.SetToken(config.GetAuthToken())
+	}
+
+	gsvOut, res, err := config.AklClient.GetRotatedSecretValue(ctx).Body(body).Execute()
+	if err != nil {
+		if errors.As(err, &apiErr) {
+			return "", fmt.Errorf("can't get secret value: %v", string(apiErr.Body()))
+		}
+		return "", fmt.Errorf("can't get secret value: %w", err)
+	}
+	defer res.Body.Close()
+	val, ok := gsvOut["value"]
+	if !ok {
+		return "", fmt.Errorf("can't get secret: %v", itemName)
+	}
+	jsonValue, err := json.MarshalIndent(val, "", "  ")
+	if err != nil {
+		return "", fmt.Errorf("can't get secret value: %v", val)
+	}
+
+	return string(jsonValue), nil
 }

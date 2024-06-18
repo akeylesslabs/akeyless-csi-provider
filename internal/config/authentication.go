@@ -3,7 +3,8 @@ package config
 import (
 	"context"
 	"fmt"
-	"io/ioutil"
+	"github.com/akeylesslabs/akeyless-go/v4"
+	"io"
 	"log"
 	"os"
 	"reflect"
@@ -16,7 +17,6 @@ import (
 	"github.com/akeylesslabs/akeyless-go-cloud-id/cloudprovider/aws"
 	"github.com/akeylesslabs/akeyless-go-cloud-id/cloudprovider/azure"
 	"github.com/akeylesslabs/akeyless-go-cloud-id/cloudprovider/gcp"
-	"github.com/akeylesslabs/akeyless-go/v3"
 )
 
 const (
@@ -166,7 +166,7 @@ func readK8SServiceAccountJWT() (string, error) {
 	}
 	defer data.Close()
 
-	contentBytes, err := ioutil.ReadAll(data)
+	contentBytes, err := io.ReadAll(data)
 	if err != nil {
 		return "", err
 	}
