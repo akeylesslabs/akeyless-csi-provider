@@ -168,8 +168,11 @@ func (p *Provider) GetStaticSecret(ctx context.Context, itemName string, cfg con
 	if !ok {
 		return "", fmt.Errorf("can't get secret: %v", itemName)
 	}
-
-	return val.(string), nil
+	value, ok := val.(string)
+	if !ok {
+		return "", fmt.Errorf("value must be a string, got %T instead", val)
+	}
+	return value, nil
 }
 
 // HandleMountRequest mounts content of the vault object to target path
@@ -218,8 +221,7 @@ func (p *Provider) GetRotatedSecret(ctx context.Context, itemName string, cfg co
 	}
 	jsonValue, err := json.MarshalIndent(val, "", "  ")
 	if err != nil {
-		return "", fmt.Errorf("can't get secret value: %v", val)
+		return "", fmt.Errorf("can't marshal secret value: %v", val)
 	}
-
 	return string(jsonValue), nil
 }
