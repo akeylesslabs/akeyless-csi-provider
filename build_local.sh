@@ -1,5 +1,5 @@
 #!/bin/bash
-
+set -e
 function usage() {
 	cat <<EOF
 Usage: $0
@@ -49,13 +49,8 @@ GOOS=$os GOARCH=$arc CGO_ENABLED=0 go build \
 		.
 
 echo "Building $image:latest docker image"
-docker build --platform linux/amd64 --build-arg PRODUCT_VERSION="$version" --no-cache -t $image:latest .
+eval $(minikube docker-env)
+docker build --platform linux/amd64 --build-arg PRODUCT_VERSION="$version" --load -t $image:latest .
+
 docker tag "$image":latest "$docker_repo/$image":"$version"
-
-docker login
-echo "Docker login Succeeded"
-
-#Push image
-docker push "$docker_repo/$image"
-
 rm -rf dist/
