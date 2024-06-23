@@ -50,7 +50,7 @@ GOOS=$os GOARCH=$arc CGO_ENABLED=0 go build \
 
 echo "Building $image:latest docker image"
 eval $(minikube docker-env)
-docker build --platform linux/amd64 --build-arg PRODUCT_VERSION="$version" --load -t $image:latest .
+docker build --build-arg PRODUCT_VERSION="$version" --load -t $image:latest .
 
 docker tag "$image":latest "$docker_repo/$image":"$version"
 rm -rf dist/
