@@ -57,5 +57,6 @@ echo "Docker login Succeeded"
 
 #Push image
 docker push "$docker_repo/$image"
+docker push "$docker_repo/$image:$version"
 
 rm -rf dist/
