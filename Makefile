@@ -1,10 +1,10 @@
 GO_VERSION = $(shell go mod edit -json | jq -r .Go)
 DATE = $(shell date -u +%Y%m%d.%H%M%S)
-IMAGE_NAME = "docker.io/akeyless/akeyless-csi-provider"
+IMAGE_NAME = docker.io/akeyless/akeyless-csi-provider
 VERSION ?= 0.0.0
 
 ifeq ($(VERSION), 0.0.0)
-	TAG = "latest"
+	TAG = latest
 else
     TAG = v$(VERSION)
 endif

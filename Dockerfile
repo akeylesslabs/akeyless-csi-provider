@@ -5,9 +5,12 @@ WORKDIR /src
 
 COPY . .
 
+RUN --mount=type=cache,mode=0755,target=/go/pkg/mod go mod download
+
 ARG ARC="amd64"
 ARG LDFLAGS=""
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=$ARC go build -ldflags "${LDFLAGS}" -a -installsuffix cgo -o akeyless-csi-provider .
+ENV GOCACHE=/root/.cache/go-build
+RUN --mount=type=cache,mode=0755,target=/go/pkg/mod --mount=type=cache,target="/root/.cache/go-build" CGO_ENABLED=0 GOOS=linux GOARCH=$ARC go build -ldflags "${LDFLAGS}" -a -installsuffix cgo -o akeyless-csi-provider .
 
 # Final stage
 FROM alpine:3.20.1
