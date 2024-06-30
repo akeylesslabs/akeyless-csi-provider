@@ -2,6 +2,7 @@ package config
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"github.com/akeylesslabs/akeyless-go/v4"
 	"io"
@@ -13,7 +14,6 @@ import (
 	"sync"
 	"time"
 
-	encoding_ex "akeyless.io/akeyless-main-repo/go/src/infra/encoding-ex"
 	"github.com/akeylesslabs/akeyless-go-cloud-id/cloudprovider/aws"
 	"github.com/akeylesslabs/akeyless-go-cloud-id/cloudprovider/azure"
 	"github.com/akeylesslabs/akeyless-go-cloud-id/cloudprovider/gcp"
@@ -173,7 +173,7 @@ func readK8SServiceAccountJWT() (string, error) {
 
 	a := strings.TrimSpace(string(contentBytes))
 
-	return encoding_ex.Base64Encode([]byte(a)), nil
+	return base64.StdEncoding.EncodeToString([]byte(a)), nil
 }
 
 func (c *Config) StartAuthentication(ctx context.Context, closed chan bool) error {
