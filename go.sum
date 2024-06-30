@@ -583,5 +583,5 @@ k8s.io/apimachinery v0.28.1/go.mod h1:X0xh/chESs2hP9koe+SdIAcXWcQ+RM5hy0ZynB+yEv
 rsc.io/binaryregexp v0.2.0/go.mod h1:qTv7/COck+e2FymRvadv62gMdZztPaShugOCi3I+8D8=
 rsc.io/quote/v3 v3.1.0/go.mod h1:yEA65RcK8LyAZtP9Kv3t0HmxON59tX3rD+tICJqUlj0=
 rsc.io/sampler v1.3.0/go.mod h1:T1hPZKmBbMNahiBKFy5HrXp6adAjACjK9JXDnKaTXpA=
-sigs.k8s.io/secrets-store-csi-driver v1.0.0 h1:rFIIj+XbOUOgd+W7QES7NQA+uopVw1mFfuXr7w84J5k=
-sigs.k8s.io/secrets-store-csi-driver v1.0.0/go.mod h1:OtKvgLPVFM2GLMBo6Hx33TGWzDo0GrQkW5aCpWfepzs=
+sigs.k8s.io/secrets-store-csi-driver v1.3.3 h1:8UXTMIO4kZqGLJ65UWRfJXbRnb6PU6olP+vSriGZRp0=
+sigs.k8s.io/secrets-store-csi-driver v1.3.3/go.mod h1:jh6wML45aTbxT2YZtU4khzSm8JYxwVrQbhsum+WR6j8=
