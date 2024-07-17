@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
-	"github.com/akeylesslabs/akeyless-go/v4"
 	"io"
 	"log"
 	"os"
@@ -17,6 +16,7 @@ import (
 	"github.com/akeylesslabs/akeyless-go-cloud-id/cloudprovider/aws"
 	"github.com/akeylesslabs/akeyless-go-cloud-id/cloudprovider/azure"
 	"github.com/akeylesslabs/akeyless-go-cloud-id/cloudprovider/gcp"
+	"github.com/akeylesslabs/akeyless-go/v4"
 )
 
 const (
