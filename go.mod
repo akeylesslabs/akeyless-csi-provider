@@ -2,7 +2,7 @@ module github.com/akeylesslabs/akeyless-csi-provider
 
 go 1.21
 
-toolchain go1.21.5
+toolchain go1.23.3
 
 require (
 	github.com/akeylesslabs/akeyless-go-cloud-id v0.3.4
