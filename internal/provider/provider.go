@@ -197,8 +197,8 @@ func (p *Provider) HandleMountRequest(ctx context.Context, cfg config.Config) (*
 }
 
 func (p *Provider) GetRotatedSecret(ctx context.Context, itemName string, cfg config.Config) (string, error) {
-	body := akeyless.GetRotatedSecretValue{
-		Names: itemName,
+	body := akeyless.RotatedSecretGetValue{
+		Name: itemName,
 	}
 	body.SetJson(true)
 	if cfg.UsingUID() {
@@ -207,7 +207,7 @@ func (p *Provider) GetRotatedSecret(ctx context.Context, itemName string, cfg co
 		body.SetToken(config.GetAuthToken())
 	}
 
-	gsvOut, res, err := config.AklClient.GetRotatedSecretValue(ctx).Body(body).Execute()
+	gsvOut, res, err := config.AklClient.RotatedSecretGetValue(ctx).Body(body).Execute()
 	if err != nil {
 		if errors.As(err, &apiErr) {
 			return "", fmt.Errorf("can't get secret value: %v", string(apiErr.Body()))
