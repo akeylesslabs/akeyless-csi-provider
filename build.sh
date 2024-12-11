@@ -49,7 +49,7 @@ GOOS=$os GOARCH=$arc CGO_ENABLED=0 go build \
 		.
 
 echo "Building $image:latest docker image"
-docker build --build-arg PRODUCT_VERSION="$version" --no-cache -t $image:latest .
+docker build --load --build-arg PRODUCT_VERSION="$version" --no-cache -t $image:latest .
 docker tag "$image":latest "$docker_repo/$image":"$version"
 
 docker login
