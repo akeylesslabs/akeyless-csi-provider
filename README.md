@@ -17,7 +17,7 @@
 The recommended installation method is via helm 3:
 
 ```bash
-helm repo add akeylesshttps://akeylesslabs.github.io/helm-charts
+helm repo add akeyless https://akeylesslabs.github.io/helm-charts
 helm install akeyless akeyless/akeyless-csi-provider
 ```
 
