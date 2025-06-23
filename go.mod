@@ -5,7 +5,7 @@ go 1.21
 toolchain go1.23.3
 
 require (
-	github.com/akeylesslabs/akeyless-go-cloud-id v0.3.4
+	github.com/akeylesslabs/akeyless-go-cloud-id v0.3.5
 	github.com/akeylesslabs/akeyless-go/v4 v4.0.0
 	github.com/stretchr/testify v1.9.0
 	google.golang.org/grpc v1.58.3
@@ -17,7 +17,7 @@ require (
 require (
 	cloud.google.com/go/compute v1.21.0 // indirect
 	cloud.google.com/go/compute/metadata v0.2.3 // indirect
-	github.com/aws/aws-sdk-go v1.44.332 // indirect
+	github.com/aws/aws-sdk-go v1.55.7 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/golang/groupcache v0.0.0-20210331224755-41bb18bfe9da // indirect
 	github.com/golang/protobuf v1.5.4 // indirect
