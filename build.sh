@@ -1,16 +1,15 @@
 #!/bin/bash
 
 function usage() {
-	cat <<EOF
+  cat <<EOF
 Usage: $0
     [--version]
 
 required arguments:
-    --version      Specify the version for image    
+    --version      Specify the version for image
 EOF
-	exit 1
+  exit 1
 }
-
 
 function handle_parameters() {
     version=""
@@ -19,7 +18,7 @@ function handle_parameters() {
         --version )
             version="$2"
             shift
-            ;;        
+            ;;
         esac
         shift
     done
@@ -27,9 +26,8 @@ function handle_parameters() {
     if [ "$version" == "" ]; then
         echo "version is missing"
         usage
-    fi    
+    fi
 }
-
 
 # ========== Start main script ============
 
@@ -37,19 +35,36 @@ handle_parameters $*
 
 image="akeyless/akeyless-csi-provider"
 docker_repo="docker.io"
-arc='amd64'
+arcs=('amd64' 'arm64')
 os='linux'
 versionVar="akeyless.io/akeyless-csi-provider/internal/version.Version=$version"
 buildDateVar="akeyless.io/akeyless-csi-provider/go/src/internal/version.BuildDate=$(date -u +%Y%m%d.%H%M%S)"
 goVer="github.com/akeylesslabs/akeyless-csi-provider/internal/version.GoVersion=$(go version)"
 
-GOOS=$os GOARCH=$arc CGO_ENABLED=0 go build \
-		-ldflags "-w -s -X $versionVar -X $buildDateVar" \
-		-o dist/ \
-		.
+
+docker_platforms=()
+mkdir dist
+
+# Loop through arc array and build source for each architecture.
+for arc in "${arcs[@]}";
+do
+  echo "Building source for ${arc}"
+
+  mkdir "dist/${arc}"
+  GOOS=$os GOARCH=$arc CGO_ENABLED=0 go build \
+    -ldflags "-w -s -X $versionVar -X $buildDateVar" \
+    -o dist/$arc \
+    .
+
+  docker_platforms+=("${os}/${arc}")
+done
+
+# Create a comma separated list of docker platforms (i.e., linux/$arc,linux/$arc).
+docker_platforms=$(IFS=,;echo "${docker_platforms[*]}")
+echo "Building image for ${docker_platforms}"
 
 echo "Building $image:latest docker image"
-docker build --load --build-arg PRODUCT_VERSION="$version" --no-cache -t $image:latest .
+docker buildx build --load --platform=$docker_platforms --build-arg PRODUCT_VERSION="$version" --no-cache -t $image:latest .
 docker tag "$image":latest "$docker_repo/$image":"$version"
 
 docker login
