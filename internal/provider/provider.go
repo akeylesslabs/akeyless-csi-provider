@@ -54,7 +54,7 @@ func (p *Provider) loadItems(ctx context.Context, cfg config.Config) {
 	for _, secret := range cfg.Parameters.Secrets {
 		version, secVal, err := p.GetSecretByType(ctx, secret.SecretPath, cfg)
 		if err != nil {
-			log.Fatalf(err.Error())
+			log.Fatal(err.Error())
 			return
 		}
 		p.versions[fmt.Sprintf("%s:%s", secret.FileName, secret.SecretPath)] = strconv.Itoa(int(version))
