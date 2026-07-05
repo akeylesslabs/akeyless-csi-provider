@@ -1,4 +1,4 @@
-FROM alpine:3.21.3 AS default
+FROM alpine:3.23 AS default
 
 ARG PRODUCT_VERSION
 ARG PRODUCT_NAME=akeyless-csi-provider

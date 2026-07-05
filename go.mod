@@ -1,6 +1,6 @@
 module github.com/akeylesslabs/akeyless-csi-provider
 
-go 1.26.1
+go 1.26.4
 
 require (
 	github.com/akeylesslabs/akeyless-go-cloud-id v0.3.5
@@ -31,7 +31,7 @@ require (
 	github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	go.opencensus.io v0.24.0 // indirect
-	golang.org/x/crypto v0.51.0 // indirect
+	golang.org/x/crypto v0.52.0 // indirect
 	golang.org/x/net v0.55.0 // indirect
 	golang.org/x/oauth2 v0.34.0 // indirect
 	golang.org/x/sys v0.45.0 // indirect
