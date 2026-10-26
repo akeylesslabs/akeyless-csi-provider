@@ -172,6 +172,7 @@ func (c *Config) authWithJWT(ctx context.Context, aklClient *akeyless.V2ApiServi
 	}
 
 	authBody := akeyless.NewAuthWithDefaults()
+	authBody.SetAccessId(c.AkeylessAccessID)
 	authBody.SetAccessType(string(JWT))
 	authBody.SetJwt(jwtToken)
 	authOut, httpResp, err := aklClient.Auth(ctx).Body(*authBody).Execute()
@@ -212,6 +213,11 @@ func (c *Config) resolveJWT() (string, error) {
 	}
 	if !entry.ExpirationTimestamp.IsZero() && !entry.ExpirationTimestamp.After(jwtNow()) {
 		return "", fmt.Errorf("ServiceAccount token for audience %q expired at %s", audience, entry.ExpirationTimestamp.UTC().Format(time.RFC3339))
+	}
+	if !entry.ExpirationTimestamp.IsZero() {
+		log.Printf("using workload ServiceAccount token for audience %q (expires %s)", audience, entry.ExpirationTimestamp.UTC().Format(time.RFC3339))
+	} else {
+		log.Printf("using workload ServiceAccount token for audience %q", audience)
 	}
 	return token, nil
 }
