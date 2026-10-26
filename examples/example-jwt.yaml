@@ -6,16 +6,17 @@
 #     --jwks-uri https://oidc.eks.<region>.amazonaws.com/id/<ID>/keys \
 #     --unique-identifier sub
 #
-# Bind sub-claims (namespace, serviceaccount, etc.) on the Access Role.
+# Bind sub-claims to the ServiceAccount that owns the JWT passed in
+# nodePublishSecretRef (key akeylessJWT).
 # Prefer short-lived projected ServiceAccount tokens over static JWTs.
 #
-# Token sources on each auth/renewal (first match wins):
-#   1. Live env AKEYLESS_JWT on the provider DaemonSet (re-read on renewal)
-#   2. CSI driver secret key "akeylessJWT" captured at mount (remount to rotate)
-#   3. Provider pod ServiceAccount token at
-#      /var/run/secrets/kubernetes.io/serviceaccount/token (re-read on renewal)
+# Token sources (first match wins):
+#   1. CSI secret key "akeylessJWT" for this mount
+#   2. Env AKEYLESS_JWT on the provider, only if this mount did not
+#      set akeylessJWT (one identity for every such mount)
 #
 # Do NOT put the JWT in SecretProviderClass parameters (stored in etcd).
+# Do NOT fall back to the provider ServiceAccount token.
 apiVersion: secrets-store.csi.x-k8s.io/v1
 kind: SecretProviderClass
 metadata:
@@ -50,7 +51,7 @@ spec:
         readOnly: true
         volumeAttributes:
           secretProviderClass: "akeyless-jwt-example"
-        # Optional: supply a JWT from a Kubernetes Secret instead of the
-        # provider ServiceAccount token. Key must be "akeylessJWT".
-        # nodePublishSecretRef:
-        #   name: akeyless-jwt
+        # JWT for this mount. Key must be "akeylessJWT".
+        # Use a short-lived projected token for the workload ServiceAccount.
+        nodePublishSecretRef:
+          name: akeyless-jwt

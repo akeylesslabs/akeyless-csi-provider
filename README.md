@@ -16,19 +16,18 @@ Supported `akeylessAccessType` values:
 | `gcp` | GCP workload identity (`akeylessGCPAudience`). |
 | `universal_identity` | Universal Identity init token. |
 
-If `akeylessAccessType` is omitted, the provider auto-detects among access key / cloud / k8s / jwt / universal identity (legacy behavior).
+If `akeylessAccessType` is omitted, the provider auto-detects among access key / cloud / k8s / jwt / universal identity (legacy behavior). JWT is only probed when a JWT was supplied via CSI secret or `AKEYLESS_JWT`.
 
 ### OAuth2.0 / JWT
 
 Set `akeylessAccessType: jwt` (or `oauth2`) and the auth-method `akeylessAccessID`.
 
-Token sources on each auth/renewal (first match wins):
+Token sources on each auth (first match wins):
 
-1. Live provider env `AKEYLESS_JWT` (re-read on renewal)
-2. CSI `nodePublishSecretRef` secret key `akeylessJWT` captured at mount (remount to rotate)
-3. Provider ServiceAccount token at `/var/run/secrets/kubernetes.io/serviceaccount/token` (re-read on renewal)
+1. CSI `nodePublishSecretRef` secret key `akeylessJWT` (this mount only; updated when the driver republishes)
+2. Provider env `AKEYLESS_JWT`, only when this mount did not set `akeylessJWT` (one identity for every such mount on the node)
 
-Do **not** put the JWT in `SecretProviderClass` parameters (those are stored in etcd). Configure sub-claims on the Akeyless Access Role so only intended workloads can authenticate. See `examples/example-jwt.yaml`.
+Do **not** fall back to the provider ServiceAccount token, and do **not** put the JWT in `SecretProviderClass` parameters (those are stored in etcd). Bind Access Role sub-claims to the ServiceAccount that owns the JWT in `akeylessJWT`. See `examples/example-jwt.yaml`.
 
 ## Installation
 

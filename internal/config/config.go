@@ -26,8 +26,8 @@ const (
 	AkeylessGCPAudience       = "AKEYLESS_GCP_AUDIENCE"
 	AkeylessUIDInitToken      = "AKEYLESS_UID_INIT_TOKEN"
 	AkeylessK8sAuthConfigName = "AKEYLESS_K8S_AUTH_CONFIG_NAME"
-	// AkeylessJWT is an optional bearer JWT for access-type jwt/oauth2.
-	// Prefer the provider ServiceAccount token file over a static JWT.
+	// AkeylessJWT is an optional bearer JWT for access-type jwt/oauth2
+	// when not supplied via the CSI nodePublishSecretRef secret.
 	AkeylessJWT = "AKEYLESS_JWT"
 )
 
@@ -46,10 +46,6 @@ const (
 	OAuth2 accessType = "oauth2"
 )
 
-var (
-	AklClient *akeyless.V2ApiService
-)
-
 // Config represents all of the provider's configurable behaviour from the MountRequest proto message:
 // * Parameters from the `Attributes` field.
 // * Plus the rest of the proto fields we consume.
@@ -58,6 +54,7 @@ type Config struct {
 	Parameters
 	TargetPath     string
 	FilePermission os.FileMode
+	session        *authSession
 }
 
 // Parameters stores the parameters specified in a mount request's `Attributes` field.
@@ -82,9 +79,9 @@ type Parameters struct {
 	AkeylessGCPAudience       string
 	AkeylessUIDInitToken      string
 	AkeylessK8sAuthConfigName string
-	// AkeylessJWT holds a bearer JWT for oauth2/jwt auth when supplied via the
-	// CSI driver secrets payload (captured at mount). Live env AKEYLESS_JWT is
-	// re-read on each auth. Never read from SPC parameters (etcd).
+	// AkeylessJWT holds a bearer JWT for oauth2/jwt auth from the CSI driver
+	// secrets payload (nodePublishSecretRef) only. Env AKEYLESS_JWT is read
+	// live in resolveJWT when this field is empty. Never from SPC parameters.
 	AkeylessJWT string
 
 	// accessTypeExplicit is true when akeylessAccessType came from SPC params
@@ -126,19 +123,20 @@ func Parse(secretStr, parametersStr, targetPath, permissionStr string, defaultVa
 		return Config{}, err
 	}
 
-	AklClient = createClient(config.AkeylessGatewayURL)
+	config.session = &authSession{client: createClient(config.AkeylessGatewayURL)}
+	aklClient := config.Client()
 	// Skip when AccessID is unset so offline unit tests and incomplete configs
 	// can still parse; Mount will fail later without a token.
 	if config.AkeylessAccessID != "" {
 		if config.accessTypeExplicit {
 			// Explicit type: authenticate only with that method (no probing).
-			if err := config.authenticateConfigured(context.Background(), AklClient); err != nil {
+			if err := config.authenticateConfigured(context.Background(), aklClient); err != nil {
 				return Config{}, err
 			}
 		} else {
 			// Omitted akeylessAccessType: preserve legacy auto-detect so AWS/Azure/GCP/k8s
 			// configs without an access key keep working.
-			detected := config.detectAccessType(AklClient)
+			detected := config.detectAccessType(aklClient)
 			if detected == "" {
 				return Config{}, fmt.Errorf("failed to detect access type of %s", config.AkeylessAccessID)
 			}
@@ -190,7 +188,8 @@ func parseParameters(secretStr, parametersStr string, defaultAkeylessGatewayURL 
 	parameters.AkeylessUIDInitToken = params["akeylessUIDInitToken"]
 	parameters.AkeylessK8sAuthConfigName = params["akeylessK8sAuthConfigName"]
 	// Intentionally do not accept akeylessJWT from SPC parameters (attrs are
-	// often stored in etcd). Prefer SA token file, CSI secrets, or env.
+	// often stored in etcd). Mount JWT comes from CSI secrets only; env is
+	// read live in resolveJWT when the mount secret is unset.
 
 	if parameters.AkeylessAccessKey == "" && secret != nil {
 		parameters.AkeylessAccessKey = secret["akeylessAccessKey"]
@@ -242,10 +241,6 @@ func parseParameters(secretStr, parametersStr string, defaultAkeylessGatewayURL 
 
 	if parameters.AkeylessK8sAuthConfigName == "" {
 		parameters.AkeylessK8sAuthConfigName = os.Getenv(AkeylessK8sAuthConfigName)
-	}
-
-	if parameters.AkeylessJWT == "" {
-		parameters.AkeylessJWT = os.Getenv(AkeylessJWT)
 	}
 
 	// Set default values.
@@ -315,8 +310,13 @@ func (c *Config) validate() error {
 	if len(c.Parameters.Secrets) == 0 {
 		return errors.New("no secrets configured - the provider will not read any secret material")
 	}
-	if c.UsingJWT() && c.AkeylessAccessID == "" {
-		return errors.New("akeylessAccessID is required for jwt/oauth2 authentication")
+	if c.UsingJWT() {
+		if c.AkeylessAccessID == "" {
+			return errors.New("akeylessAccessID is required for jwt/oauth2 authentication")
+		}
+		if !c.hasExplicitJWT() {
+			return errors.New("jwt/oauth2 requires CSI secret akeylessJWT or env AKEYLESS_JWT")
+		}
 	}
 
 	return nil
@@ -366,7 +366,7 @@ func (c *Config) authenticateConfigured(ctx context.Context, aklClient *akeyless
 	case c.UsingJWT():
 		return c.authWithJWT(ctx, aklClient)
 	case c.UsingUID():
-		setAuthToken(c.AkeylessUIDInitToken)
+		c.setAuthToken(c.AkeylessUIDInitToken)
 		return c.rotateUIDToken(ctx, aklClient)
 	default:
 		return fmt.Errorf("unsupported akeylessAccessType %q", c.AkeylessAccessType)
@@ -400,11 +400,14 @@ func (c *Config) detectAccessType(aklClient *akeyless.V2ApiService) accessType {
 		return K8S
 	}
 
-	if err := c.authWithJWT(context.Background(), aklClient); err == nil {
-		return JWT
+	// Only probe JWT when this mount actually supplied a token (CSI secret or env).
+	if c.hasExplicitJWT() {
+		if err := c.authWithJWT(context.Background(), aklClient); err == nil {
+			return JWT
+		}
 	}
 
-	setAuthToken(c.AkeylessUIDInitToken)
+	c.setAuthToken(c.AkeylessUIDInitToken)
 
 	if err := c.rotateUIDToken(context.Background(), aklClient); err == nil {
 		return UniversalIdentity

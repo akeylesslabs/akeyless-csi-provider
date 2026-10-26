@@ -5,11 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/akeylesslabs/akeyless-go/v4"
 	"log"
 	"strconv"
 	"time"
 
+	"github.com/akeylesslabs/akeyless-go/v4"
 	"github.com/akeylesslabs/akeyless-csi-provider/internal/config"
 	pb "sigs.k8s.io/secrets-store-csi-driver/provider/v1alpha1"
 )
@@ -40,16 +40,17 @@ func NewProvider() *Provider {
 	return p
 }
 
+func setBodyToken(cfg config.Config, setUID func(string), setToken func(string)) {
+	if cfg.UsingUID() {
+		setUID(cfg.AuthToken())
+	} else {
+		setToken(cfg.AuthToken())
+	}
+}
+
 func (p *Provider) loadItems(ctx context.Context, cfg config.Config) {
 
 	p.versions = make(map[string]string)
-
-	body := akeyless.GetSecretValue{}
-	if cfg.UsingUID() {
-		body.SetUidToken(config.GetAuthToken())
-	} else {
-		body.SetToken(config.GetAuthToken())
-	}
 
 	for _, secret := range cfg.Parameters.Secrets {
 		version, secVal, err := p.GetSecretByType(ctx, secret.SecretPath, cfg)
@@ -94,13 +95,9 @@ func (p *Provider) DescribeItem(ctx context.Context, itemName string, cfg config
 		Name: itemName,
 	}
 
-	if cfg.UsingUID() {
-		body.SetUidToken(config.GetAuthToken())
-	} else {
-		body.SetToken(config.GetAuthToken())
-	}
+	setBodyToken(cfg, body.SetUidToken, body.SetToken)
 
-	gsvOut, res, err := config.AklClient.DescribeItem(ctx).Body(body).Execute()
+	gsvOut, res, err := cfg.Client().DescribeItem(ctx).Body(body).Execute()
 	if err != nil {
 		if errors.As(err, &apiErr) {
 			var item *Item
@@ -122,13 +119,9 @@ func (p *Provider) GetCertificate(ctx context.Context, itemName string, cfg conf
 		Name: itemName,
 	}
 
-	if cfg.UsingUID() {
-		body.SetUidToken(config.GetAuthToken())
-	} else {
-		body.SetToken(config.GetAuthToken())
-	}
+	setBodyToken(cfg, body.SetUidToken, body.SetToken)
 
-	gcvOut, res, err := config.AklClient.GetCertificateValue(ctx).Body(body).Execute()
+	gcvOut, res, err := cfg.Client().GetCertificateValue(ctx).Body(body).Execute()
 	if err != nil {
 		if errors.As(err, &apiErr) {
 			return "", fmt.Errorf("can't get certificate value: %v", string(apiErr.Body()))
@@ -150,13 +143,9 @@ func (p *Provider) GetStaticSecret(ctx context.Context, itemName string, cfg con
 		Names: []string{itemName},
 	}
 
-	if cfg.UsingUID() {
-		body.SetUidToken(config.GetAuthToken())
-	} else {
-		body.SetToken(config.GetAuthToken())
-	}
+	setBodyToken(cfg, body.SetUidToken, body.SetToken)
 
-	gsvOut, res, err := config.AklClient.GetSecretValue(ctx).Body(body).Execute()
+	gsvOut, res, err := cfg.Client().GetSecretValue(ctx).Body(body).Execute()
 	if err != nil {
 		if errors.As(err, &apiErr) {
 			return "", fmt.Errorf("can't get secret value: %v", string(apiErr.Body()))
@@ -201,13 +190,9 @@ func (p *Provider) GetRotatedSecret(ctx context.Context, itemName string, cfg co
 		Names: itemName,
 	}
 	body.SetJson(true)
-	if cfg.UsingUID() {
-		body.SetUidToken(config.GetAuthToken())
-	} else {
-		body.SetToken(config.GetAuthToken())
-	}
+	setBodyToken(cfg, body.SetUidToken, body.SetToken)
 
-	gsvOut, res, err := config.AklClient.GetRotatedSecretValue(ctx).Body(body).Execute()
+	gsvOut, res, err := cfg.Client().GetRotatedSecretValue(ctx).Body(body).Execute()
 	if err != nil {
 		if errors.As(err, &apiErr) {
 			return "", fmt.Errorf("can't get secret value: %v", string(apiErr.Body()))

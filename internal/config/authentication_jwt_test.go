@@ -41,28 +41,21 @@ func TestParseParameters_JWTFromCSISecretNotFromAttributes(t *testing.T) {
 	require.Equal(t, "header.payload.sig", got.AkeylessJWT)
 }
 
-func TestParseParameters_JWTFromEnv(t *testing.T) {
+func TestResolveJWT_FromEnvWhenMountSecretEmpty(t *testing.T) {
 	t.Setenv(AkeylessJWT, "env.jwt.token")
-	attrs := `{"akeylessAccessType":"jwt","akeylessAccessID":"p-jwt","objects":"- secretPath: /x\n  fileName: x"}`
-	got, err := parseParameters("", attrs, defaultAkeylessGatewayURL, defaultVaultKubernetesMountPath)
-	require.NoError(t, err)
-	require.Equal(t, "env.jwt.token", got.AkeylessJWT)
-}
-
-func TestResolveJWT_PrefersConfiguredOverFile(t *testing.T) {
-	t.Setenv(AkeylessJWT, "")
-	cfg := &Config{Parameters: Parameters{AkeylessJWT: "  configured.jwt  "}}
+	cfg := &Config{}
 	got, err := cfg.resolveJWT()
 	require.NoError(t, err)
-	require.Equal(t, "configured.jwt", got)
+	require.Equal(t, "env.jwt.token", got)
+	require.True(t, cfg.hasExplicitJWT())
 }
 
-func TestResolveJWT_PrefersLiveEnvOverConfigured(t *testing.T) {
+func TestResolveJWT_PrefersMountSecretOverEnv(t *testing.T) {
 	t.Setenv(AkeylessJWT, "live.env.jwt")
-	cfg := &Config{Parameters: Parameters{AkeylessJWT: "stale.csi.jwt"}}
+	cfg := &Config{Parameters: Parameters{AkeylessJWT: "mount.csi.jwt"}}
 	got, err := cfg.resolveJWT()
 	require.NoError(t, err)
-	require.Equal(t, "live.env.jwt", got)
+	require.Equal(t, "mount.csi.jwt", got)
 }
 
 func TestParseParameters_AccessTypeExplicitFlag(t *testing.T) {
@@ -80,7 +73,7 @@ func TestParseParameters_AccessTypeExplicitFlag(t *testing.T) {
 	require.True(t, got.accessTypeExplicit)
 }
 
-func TestResolveJWT_ReadsServiceAccountFile(t *testing.T) {
+func TestResolveJWT_IgnoresServiceAccountFile(t *testing.T) {
 	t.Setenv(AkeylessJWT, "")
 	dir := t.TempDir()
 	tokenPath := filepath.Join(dir, "token")
@@ -91,27 +84,19 @@ func TestResolveJWT_ReadsServiceAccountFile(t *testing.T) {
 	t.Cleanup(func() { DefServiceAccountFile = orig })
 
 	cfg := &Config{}
-	got, err := cfg.resolveJWT()
-	require.NoError(t, err)
-	require.Equal(t, "sa.jwt.token", got)
+	_, err := cfg.resolveJWT()
+	require.Error(t, err)
 }
 
 func TestResolveJWT_EmptySourcesError(t *testing.T) {
 	t.Setenv(AkeylessJWT, "")
-	dir := t.TempDir()
-	tokenPath := filepath.Join(dir, "token")
-	require.NoError(t, os.WriteFile(tokenPath, []byte("   \n"), 0o600))
-
-	orig := DefServiceAccountFile
-	DefServiceAccountFile = tokenPath
-	t.Cleanup(func() { DefServiceAccountFile = orig })
-
 	cfg := &Config{}
 	_, err := cfg.resolveJWT()
 	require.Error(t, err)
 }
 
-func TestValidate_JWTRequiresAccessID(t *testing.T) {
+func TestValidate_JWTRequiresAccessIDAndToken(t *testing.T) {
+	t.Setenv(AkeylessJWT, "")
 	cfg := Config{
 		TargetPath: "/mnt",
 		Parameters: Parameters{
@@ -122,6 +107,9 @@ func TestValidate_JWTRequiresAccessID(t *testing.T) {
 	require.Error(t, cfg.validate())
 
 	cfg.AkeylessAccessID = "p-jwt"
+	require.Error(t, cfg.validate())
+
+	cfg.AkeylessJWT = "header.payload.sig"
 	require.NoError(t, cfg.validate())
 }
 

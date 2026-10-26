@@ -156,6 +156,7 @@ func TestParseConfig(t *testing.T) {
 		require.NoError(t, err)
 		cfg, err := Parse("", string(parametersStr), tc.targetPath, "420", defaultAkeylessGatewayURL, defaultVaultKubernetesMountPath)
 		require.NoError(t, err, tc.name)
+		cfg.session = nil // session is mount-local; ignore for structural equality
 		require.Equal(t, tc.expected, cfg)
 	}
 }

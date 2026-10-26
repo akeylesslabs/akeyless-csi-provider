@@ -4,48 +4,59 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
-	"github.com/akeylesslabs/akeyless-go/v4"
 	"io"
 	"log"
 	"os"
-	"reflect"
-	"runtime"
 	"strings"
 	"sync"
-	"time"
 
+	"github.com/akeylesslabs/akeyless-go/v4"
 	"github.com/akeylesslabs/akeyless-go-cloud-id/cloudprovider/aws"
 	"github.com/akeylesslabs/akeyless-go-cloud-id/cloudprovider/azure"
 	"github.com/akeylesslabs/akeyless-go-cloud-id/cloudprovider/gcp"
 )
 
-const (
-	authenticationInterval   = time.Second * 870 // 14.5 minutes - Relevant only for non-UID authentications
-	uidTokenRotationInterval = time.Second * 120
-)
-
 // DefServiceAccountFile is the projected ServiceAccount token path used for
-// k8s and jwt/oauth2 authentication. Overridable in tests.
+// Kubernetes (k8s) authentication. Overridable in tests.
 var DefServiceAccountFile = "/var/run/secrets/kubernetes.io/serviceaccount/token"
 
-var (
-	akeylessAuthToken string
-	mutexAuthToken    = &sync.RWMutex{}
-	authenticator     = func(ctx context.Context, aklClient *akeyless.V2ApiService) error { return nil }
-)
-
-func setAuthToken(t string) {
-	mutexAuthToken.Lock()
-	defer mutexAuthToken.Unlock()
-
-	akeylessAuthToken = t
+// authSession holds per-mount Akeyless credentials. Config is often copied by
+// value, so the session lives behind a pointer shared across those copies.
+type authSession struct {
+	mu     sync.RWMutex
+	token  string
+	client *akeyless.V2ApiService
 }
 
-func GetAuthToken() string {
-	mutexAuthToken.RLock()
-	defer mutexAuthToken.RUnlock()
+func (c *Config) ensureSession() {
+	if c.session == nil {
+		c.session = &authSession{}
+	}
+}
 
-	return akeylessAuthToken
+func (c *Config) setAuthToken(t string) {
+	c.ensureSession()
+	c.session.mu.Lock()
+	defer c.session.mu.Unlock()
+	c.session.token = t
+}
+
+// AuthToken returns the Akeyless session token for this mount.
+func (c *Config) AuthToken() string {
+	if c.session == nil {
+		return ""
+	}
+	c.session.mu.RLock()
+	defer c.session.mu.RUnlock()
+	return c.session.token
+}
+
+// Client returns the Akeyless API client bound to this mount.
+func (c *Config) Client() *akeyless.V2ApiService {
+	if c.session == nil {
+		return nil
+	}
+	return c.session.client
 }
 
 func (c *Config) authenticate(ctx context.Context, aklClient *akeyless.V2ApiService, authBody *akeyless.Auth) error {
@@ -56,7 +67,7 @@ func (c *Config) authenticate(ctx context.Context, aklClient *akeyless.V2ApiServ
 		return fmt.Errorf("authentication failed %v, %w", c.AkeylessGatewayURL, err)
 	}
 
-	setAuthToken(authOut.GetToken())
+	c.setAuthToken(authOut.GetToken())
 	return nil
 }
 
@@ -138,9 +149,8 @@ func (c *Config) authWithK8S(ctx context.Context, aklClient *akeyless.V2ApiServi
 }
 
 // authWithJWT authenticates using an Akeyless OAuth2.0/JWT auth method
-// (API access-type=jwt). Token resolution prefers an explicitly supplied JWT
-// (CSI secrets / AKEYLESS_JWT), then the provider ServiceAccount token file.
-// The JWT itself is never logged.
+// (API access-type=jwt). Requires an explicit JWT from the mount CSI secret
+// or AKEYLESS_JWT. The JWT itself is never logged.
 func (c *Config) authWithJWT(ctx context.Context, aklClient *akeyless.V2ApiService) error {
 	jwtToken, err := c.resolveJWT()
 	if err != nil {
@@ -160,49 +170,27 @@ func (c *Config) authWithJWT(ctx context.Context, aklClient *akeyless.V2ApiServi
 }
 
 // resolveJWT returns the bearer JWT for oauth2/jwt auth.
-// Priority on each auth/renewal attempt:
-//  1. live AKEYLESS_JWT env (re-read so env rotation works without remount)
-//  2. CSI secret value captured on Config at mount (remount to rotate)
-//  3. provider ServiceAccount token file (re-read so kubelet rotation works)
+// Priority on each auth attempt (first match wins):
+//  1. CSI secret captured on Config for this mount
+//  2. AKEYLESS_JWT, only when this mount did not set a JWT
 func (c *Config) resolveJWT() (string, error) {
-	if jwt := strings.TrimSpace(os.Getenv(AkeylessJWT)); jwt != "" {
-		return jwt, nil
-	}
 	if jwt := strings.TrimSpace(c.AkeylessJWT); jwt != "" {
 		return jwt, nil
 	}
-
-	jwt, err := readServiceAccountTokenRaw()
-	if err != nil {
-		return "", fmt.Errorf("failed to read JWT for oauth2/jwt auth from %v: %w", DefServiceAccountFile, err)
+	if jwt := strings.TrimSpace(os.Getenv(AkeylessJWT)); jwt != "" {
+		return jwt, nil
 	}
-	if jwt == "" {
-		return "", fmt.Errorf("empty JWT for oauth2/jwt auth (set CSI secret akeylessJWT, env %s, or mount a ServiceAccount token at %s)", AkeylessJWT, DefServiceAccountFile)
-	}
-	return jwt, nil
+	return "", fmt.Errorf("empty JWT for oauth2/jwt auth (set CSI secret akeylessJWT or env %s)", AkeylessJWT)
 }
 
-// readServiceAccountTokenRaw reads the projected ServiceAccount token without
-// base64 encoding. OAuth2/JWT auth expects the raw bearer token (unlike K8s auth).
-func readServiceAccountTokenRaw() (string, error) {
-	data, err := os.Open(DefServiceAccountFile)
-	if err != nil {
-		return "", err
-	}
-	defer data.Close()
-
-	contentBytes, err := io.ReadAll(data)
-	if err != nil {
-		return "", err
-	}
-	return strings.TrimSpace(string(contentBytes)), nil
+// hasExplicitJWT reports whether this mount supplied a JWT via CSI secret or env.
+func (c *Config) hasExplicitJWT() bool {
+	return strings.TrimSpace(c.AkeylessJWT) != "" || strings.TrimSpace(os.Getenv(AkeylessJWT)) != ""
 }
 
 func (c *Config) rotateUIDToken(ctx context.Context, aklClient *akeyless.V2ApiService) error {
-	// Get current token
-	currToken := GetAuthToken()
+	currToken := c.AuthToken()
 
-	// rotate token
 	log.Println("rotating UID token")
 	body := akeyless.UidRotateToken{
 		UidToken: akeyless.PtrString(currToken),
@@ -216,8 +204,7 @@ func (c *Config) rotateUIDToken(ctx context.Context, aklClient *akeyless.V2ApiSe
 		return fmt.Errorf("rotated uid token returned empty")
 	}
 
-	// Set new token
-	setAuthToken(newToken)
+	c.setAuthToken(newToken)
 	log.Println("successfully rotated UID token")
 	return nil
 }
@@ -240,98 +227,14 @@ func readK8SServiceAccountJWT() (string, error) {
 	return base64.StdEncoding.EncodeToString([]byte(a)), nil
 }
 
+// StartAuthentication is retained for callers that expect a post-Parse hook.
+// Authentication already runs in Parse and stores the session on this Config.
+// Background renewal was previously process-global and tied to the Mount RPC
+// context (cancelled when Mount returns); CSI remount re-authenticates instead.
 func (c *Config) StartAuthentication(ctx context.Context, closed chan bool) error {
-	accType := c.AkeylessAccessType
-
-	switch {
-	case accessType(accType) == AccessKey:
-		authenticator = c.authWithAccessKey
-
-	case accessType(accType) == AWSIAM:
-		authenticator = c.authWithAWS
-
-	case accessType(accType) == AzureAD:
-		authenticator = c.authWithAzure
-
-	case accessType(accType) == GCP:
-		authenticator = c.authWithGCP
-
-	case accessType(accType) == K8S:
-		authenticator = c.authWithK8S
-
-	case isJWTAccessType(accType):
-		authenticator = c.authWithJWT
+	select {
+	case closed <- true:
+	default:
 	}
-
-	if accessType(accType) == UniversalIdentity {
-		// Rotate UID token every uidTokenRotationInterval seconds
-		runForeverWithContext(ctx, func() error {
-			ticker := time.NewTicker(uidTokenRotationInterval)
-			defer ticker.Stop()
-			for {
-				select {
-				case <-ctx.Done():
-					closed <- true
-					return nil
-				case <-ticker.C:
-					err := c.rotateUIDToken(ctx, AklClient)
-					if err != nil {
-						return err
-					}
-				}
-			}
-		}, closed)
-	} else {
-		// Get new token every authenticationInterval seconds
-		runForeverWithContext(ctx, func() error {
-			ticker := time.NewTicker(authenticationInterval)
-			defer ticker.Stop()
-			for {
-				select {
-				case <-ctx.Done():
-					closed <- true
-					return nil
-				case <-ticker.C:
-					log.Println("retrieving new token")
-					err := authenticator(ctx, AklClient)
-					if err != nil {
-						return err
-					}
-					log.Println("successfully retrieved new token")
-				}
-			}
-		}, closed)
-	}
-
 	return nil
-}
-
-func getFunctionName(i interface{}) string {
-	return runtime.FuncForPC(reflect.ValueOf(i).Pointer()).Name()
-}
-
-func runForeverWithContext(ctx context.Context, fn func() error, notifier chan bool) {
-	runForeverWithContextEx(ctx, fn, "daemon", notifier)
-}
-
-func runForeverWithContextEx(ctx context.Context, fn func() error, routineType string, notifier chan bool) {
-	go func() {
-		t := time.NewTicker(time.Second)
-		defer t.Stop()
-
-		for {
-			select {
-			case <-ctx.Done():
-				notifier <- true
-				return
-			case <-t.C:
-				func() {
-					err := fn()
-					if err != nil {
-						log.Printf("%s %s ended with an error. %s", routineType, getFunctionName(fn), err)
-					}
-				}()
-			}
-		}
-	}()
 }
