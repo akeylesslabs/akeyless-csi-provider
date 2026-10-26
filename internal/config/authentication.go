@@ -22,8 +22,11 @@ import (
 const (
 	authenticationInterval   = time.Second * 870 // 14.5 minutes - Relevant only for non-UID authentications
 	uidTokenRotationInterval = time.Second * 120
-	DefServiceAccountFile    = "/var/run/secrets/kubernetes.io/serviceaccount/token"
 )
+
+// DefServiceAccountFile is the projected ServiceAccount token path used for
+// k8s and jwt/oauth2 authentication. Overridable in tests.
+var DefServiceAccountFile = "/var/run/secrets/kubernetes.io/serviceaccount/token"
 
 var (
 	akeylessAuthToken string
@@ -134,6 +137,61 @@ func (c *Config) authWithK8S(ctx context.Context, aklClient *akeyless.V2ApiServi
 	return err
 }
 
+// authWithJWT authenticates using an Akeyless OAuth2.0/JWT auth method
+// (API access-type=jwt). Token resolution prefers an explicitly supplied JWT
+// (CSI secrets / AKEYLESS_JWT), then the provider ServiceAccount token file.
+// The JWT itself is never logged.
+func (c *Config) authWithJWT(ctx context.Context, aklClient *akeyless.V2ApiService) error {
+	jwtToken, err := c.resolveJWT()
+	if err != nil {
+		return err
+	}
+
+	authBody := akeyless.NewAuthWithDefaults()
+	authBody.SetAccessType(string(JWT))
+	authBody.SetJwt(jwtToken)
+	err = c.authenticate(ctx, aklClient, authBody)
+	if err != nil {
+		// Do not include the JWT or raw API/error body in logs or returned errors.
+		log.Printf("authWithJWT ERR: authentication failed against %s", c.AkeylessGatewayURL)
+		return fmt.Errorf("jwt/oauth2 authentication failed against %s", c.AkeylessGatewayURL)
+	}
+	return nil
+}
+
+// resolveJWT returns the bearer JWT for oauth2/jwt auth.
+// Priority: configured value (CSI secret / env) > provider SA token file.
+func (c *Config) resolveJWT() (string, error) {
+	if jwt := strings.TrimSpace(c.AkeylessJWT); jwt != "" {
+		return jwt, nil
+	}
+
+	jwt, err := readServiceAccountTokenRaw()
+	if err != nil {
+		return "", fmt.Errorf("failed to read JWT for oauth2/jwt auth from %v: %w", DefServiceAccountFile, err)
+	}
+	if jwt == "" {
+		return "", fmt.Errorf("empty JWT for oauth2/jwt auth (set CSI secret akeylessJWT, env %s, or mount a ServiceAccount token at %s)", AkeylessJWT, DefServiceAccountFile)
+	}
+	return jwt, nil
+}
+
+// readServiceAccountTokenRaw reads the projected ServiceAccount token without
+// base64 encoding. OAuth2/JWT auth expects the raw bearer token (unlike K8s auth).
+func readServiceAccountTokenRaw() (string, error) {
+	data, err := os.Open(DefServiceAccountFile)
+	if err != nil {
+		return "", err
+	}
+	defer data.Close()
+
+	contentBytes, err := io.ReadAll(data)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(contentBytes)), nil
+}
+
 func (c *Config) rotateUIDToken(ctx context.Context, aklClient *akeyless.V2ApiService) error {
 	// Get current token
 	currToken := GetAuthToken()
@@ -179,21 +237,24 @@ func readK8SServiceAccountJWT() (string, error) {
 func (c *Config) StartAuthentication(ctx context.Context, closed chan bool) error {
 	accType := c.AkeylessAccessType
 
-	switch accessType(accType) {
-	case AccessKey:
+	switch {
+	case accessType(accType) == AccessKey:
 		authenticator = c.authWithAccessKey
 
-	case AWSIAM:
+	case accessType(accType) == AWSIAM:
 		authenticator = c.authWithAWS
 
-	case AzureAD:
+	case accessType(accType) == AzureAD:
 		authenticator = c.authWithAzure
 
-	case GCP:
+	case accessType(accType) == GCP:
 		authenticator = c.authWithGCP
 
-	case K8S:
+	case accessType(accType) == K8S:
 		authenticator = c.authWithK8S
+
+	case isJWTAccessType(accType):
+		authenticator = c.authWithJWT
 	}
 
 	if accessType(accType) == UniversalIdentity {

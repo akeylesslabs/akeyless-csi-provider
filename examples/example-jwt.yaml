@@ -1,0 +1,56 @@
+# Example: Akeyless OAuth2.0/JWT authentication for the CSI provider.
+#
+# Create an Akeyless auth method that trusts your cluster OIDC JWKS, e.g.:
+#   akeyless auth-method create oauth2 \
+#     --name /k8s/cluster-oidc \
+#     --jwks-uri https://oidc.eks.<region>.amazonaws.com/id/<ID>/keys \
+#     --unique-identifier sub
+#
+# Bind sub-claims (namespace, serviceaccount, etc.) on the Access Role.
+# Prefer short-lived projected ServiceAccount tokens over static JWTs.
+#
+# Token sources (first match wins):
+#   1. CSI driver secret key "akeylessJWT" (from a Kubernetes Secret)
+#   2. Env AKEYLESS_JWT on the provider DaemonSet
+#   3. Provider pod ServiceAccount token at
+#      /var/run/secrets/kubernetes.io/serviceaccount/token
+#
+# Do NOT put the JWT in SecretProviderClass parameters (stored in etcd).
+apiVersion: secrets-store.csi.x-k8s.io/v1
+kind: SecretProviderClass
+metadata:
+  name: akeyless-jwt-example
+spec:
+  provider: akeyless
+  parameters:
+    akeylessGatewayURL: "https://api.akeyless.io"
+    akeylessAccessID: "<oauth2/jwt auth-method access id>"
+    akeylessAccessType: "jwt" # alias: oauth2
+    objects: |
+      - secretPath: "/full/path/to/secret/item"
+        fileName: "local-secret-filename"
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: test-csi-jwt
+spec:
+  containers:
+    - name: alpine
+      image: alpine
+      command: ["sh", "-c", "echo going to sleep... && sleep 10000"]
+      volumeMounts:
+        - name: secrets-store-inline
+          mountPath: "/akeyless-secrets"
+          readOnly: true
+  volumes:
+    - name: secrets-store-inline
+      csi:
+        driver: secrets-store.csi.k8s.io
+        readOnly: true
+        volumeAttributes:
+          secretProviderClass: "akeyless-jwt-example"
+        # Optional: supply a JWT from a Kubernetes Secret instead of the
+        # provider ServiceAccount token. Key must be "akeylessJWT".
+        # nodePublishSecretRef:
+        #   name: akeyless-jwt

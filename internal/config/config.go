@@ -26,6 +26,9 @@ const (
 	AkeylessGCPAudience       = "AKEYLESS_GCP_AUDIENCE"
 	AkeylessUIDInitToken      = "AKEYLESS_UID_INIT_TOKEN"
 	AkeylessK8sAuthConfigName = "AKEYLESS_K8S_AUTH_CONFIG_NAME"
+	// AkeylessJWT is an optional bearer JWT for access-type jwt/oauth2.
+	// Prefer the provider ServiceAccount token file over a static JWT.
+	AkeylessJWT = "AKEYLESS_JWT"
 )
 
 type accessType string
@@ -37,6 +40,10 @@ const (
 	GCP               accessType = "gcp"
 	UniversalIdentity accessType = "universal_identity"
 	K8S               accessType = "k8s"
+	// JWT is Akeyless OAuth2.0/JWT auth (API access-type=jwt).
+	JWT accessType = "jwt"
+	// OAuth2 is accepted as an alias of JWT for SecretProviderClass/env convenience.
+	OAuth2 accessType = "oauth2"
 )
 
 var (
@@ -75,6 +82,10 @@ type Parameters struct {
 	AkeylessGCPAudience       string
 	AkeylessUIDInitToken      string
 	AkeylessK8sAuthConfigName string
+	// AkeylessJWT holds a bearer JWT for oauth2/jwt auth when supplied via the
+	// CSI driver secrets payload or AKEYLESS_JWT. It is never read from SPC
+	// parameters to avoid embedding long-lived tokens in the CR.
+	AkeylessJWT string
 }
 
 type TLSConfig struct {
@@ -112,16 +123,14 @@ func Parse(secretStr, parametersStr, targetPath, permissionStr string, defaultVa
 	}
 
 	AklClient = createClient(config.AkeylessGatewayURL)
-	if config.Parameters.AkeylessAccessType == "" {
-		config.Parameters.AkeylessAccessType = string(config.detectAccessType(AklClient))
-
-		if config.Parameters.AkeylessAccessType == "" {
-			return Config{}, fmt.Errorf("failed to detect access type of %s", config.AkeylessAccessID)
+	// Initial auth uses only the configured access type (no cross-method probing).
+	// Skip when AccessID is unset so offline unit tests and incomplete configs
+	// can still parse; Mount will fail later without a token.
+	if config.AkeylessAccessID != "" {
+		if err := config.authenticateConfigured(context.Background(), AklClient); err != nil {
+			return Config{}, err
 		}
-		log.Printf("successfully connected using %s access type", config.AkeylessAccessType)
-	} else {
-		// will perform initial authentiaction
-		config.detectAccessType(AklClient)
+		log.Printf("successfully authenticated using %s access type", config.AkeylessAccessType)
 	}
 
 	err = json.Unmarshal([]byte(permissionStr), &config.FilePermission)
@@ -166,9 +175,14 @@ func parseParameters(secretStr, parametersStr string, defaultAkeylessGatewayURL 
 	parameters.AkeylessGCPAudience = params["akeylessGCPAudience"]
 	parameters.AkeylessUIDInitToken = params["akeylessUIDInitToken"]
 	parameters.AkeylessK8sAuthConfigName = params["akeylessK8sAuthConfigName"]
+	// Intentionally do not accept akeylessJWT from SPC parameters (attrs are
+	// often stored in etcd). Prefer SA token file, CSI secrets, or env.
 
 	if parameters.AkeylessAccessKey == "" && secret != nil {
 		parameters.AkeylessAccessKey = secret["akeylessAccessKey"]
+	}
+	if secret != nil {
+		parameters.AkeylessJWT = secret["akeylessJWT"]
 	}
 
 	secretsYaml := params["objects"]
@@ -215,6 +229,10 @@ func parseParameters(secretStr, parametersStr string, defaultAkeylessGatewayURL 
 		parameters.AkeylessK8sAuthConfigName = os.Getenv(AkeylessK8sAuthConfigName)
 	}
 
+	if parameters.AkeylessJWT == "" {
+		parameters.AkeylessJWT = os.Getenv(AkeylessJWT)
+	}
+
 	// Set default values.
 	if parameters.AkeylessGatewayURL == "" {
 		parameters.AkeylessGatewayURL = defaultAkeylessGatewayURL
@@ -222,6 +240,11 @@ func parseParameters(secretStr, parametersStr string, defaultAkeylessGatewayURL 
 
 	if parameters.AkeylessAccessType == "" {
 		parameters.AkeylessAccessType = string(AccessKey)
+	}
+
+	if isJWTAccessType(parameters.AkeylessAccessType) {
+		// Normalize oauth2 alias to the API access-type value.
+		parameters.AkeylessAccessType = string(JWT)
 	}
 
 	if parameters.VaultKubernetesMountPath == "" {
@@ -255,6 +278,19 @@ func (c *Config) UsingK8S() bool {
 	return accessType(c.AkeylessAccessType) == K8S
 }
 
+func (c *Config) UsingJWT() bool {
+	return isJWTAccessType(c.AkeylessAccessType)
+}
+
+func isJWTAccessType(accType string) bool {
+	switch accessType(accType) {
+	case JWT, OAuth2:
+		return true
+	default:
+		return false
+	}
+}
+
 func (c *Config) validate() error {
 	// Some basic validation checks.
 	if c.TargetPath == "" {
@@ -262,6 +298,9 @@ func (c *Config) validate() error {
 	}
 	if len(c.Parameters.Secrets) == 0 {
 		return errors.New("no secrets configured - the provider will not read any secret material")
+	}
+	if c.UsingJWT() && c.AkeylessAccessID == "" {
+		return errors.New("akeylessAccessID is required for jwt/oauth2 authentication")
 	}
 
 	return nil
@@ -293,6 +332,31 @@ func createClient(akeylessGatewayURL string) *akeyless.V2ApiService {
 	return akeyless.NewAPIClient(cfg).V2Api
 }
 
+// authenticateConfigured performs the initial auth for the explicitly configured
+// access type. Unlike detectAccessType it does not probe other methods, which
+// avoids accidentally authenticating with a weaker or unintended credential.
+func (c *Config) authenticateConfigured(ctx context.Context, aklClient *akeyless.V2ApiService) error {
+	switch {
+	case c.UsingAccessKey():
+		return c.authWithAccessKey(ctx, aklClient)
+	case c.UsingAWS():
+		return c.authWithAWS(ctx, aklClient)
+	case c.UsingAzure():
+		return c.authWithAzure(ctx, aklClient)
+	case c.UsingGCP():
+		return c.authWithGCP(ctx, aklClient)
+	case c.UsingK8S():
+		return c.authWithK8S(ctx, aklClient)
+	case c.UsingJWT():
+		return c.authWithJWT(ctx, aklClient)
+	case c.UsingUID():
+		setAuthToken(c.AkeylessUIDInitToken)
+		return c.rotateUIDToken(ctx, aklClient)
+	default:
+		return fmt.Errorf("unsupported akeylessAccessType %q", c.AkeylessAccessType)
+	}
+}
+
 func (c *Config) detectAccessType(aklClient *akeyless.V2ApiService) accessType {
 	if c.AkeylessAccessID == "" {
 		return ""
@@ -318,6 +382,10 @@ func (c *Config) detectAccessType(aklClient *akeyless.V2ApiService) accessType {
 
 	if err := c.authWithK8S(context.Background(), aklClient); err == nil {
 		return K8S
+	}
+
+	if err := c.authWithJWT(context.Background(), aklClient); err == nil {
+		return JWT
 	}
 
 	setAuthToken(c.AkeylessUIDInitToken)

@@ -2,6 +2,32 @@
 
 [Akeyless](https://www.akeyless.io/) provider for the [Secrets Store CSI driver](https://github.com/kubernetes-sigs/secrets-store-csi-driver) allows you to get secrets stored in Akeyless and use the Secrets Store CSI driver interface to mount them into Kubernetes pods.
 
+## Authentication
+
+Supported `akeylessAccessType` values:
+
+| Type | Notes |
+| --- | --- |
+| `access_key` | API key. Prefer `AKEYLESS_ACCESS_KEY` env over SPC parameters. |
+| `k8s` | Kubernetes auth via Gateway config (`akeylessK8sAuthConfigName`). |
+| `jwt` / `oauth2` | [OAuth2.0/JWT](https://docs.akeyless.io/docs/auth-with-oauth-jwt) auth method. |
+| `aws_iam` | AWS IAM cloud identity. |
+| `azure_ad` | Azure AD / Workload Identity. |
+| `gcp` | GCP workload identity (`akeylessGCPAudience`). |
+| `universal_identity` | Universal Identity init token. |
+
+### OAuth2.0 / JWT
+
+Set `akeylessAccessType: jwt` (or `oauth2`) and the auth-method `akeylessAccessID`.
+
+Token sources (first match wins):
+
+1. CSI `nodePublishSecretRef` secret key `akeylessJWT`
+2. Provider env `AKEYLESS_JWT`
+3. Provider ServiceAccount token at `/var/run/secrets/kubernetes.io/serviceaccount/token`
+
+Do **not** put the JWT in `SecretProviderClass` parameters (those are stored in etcd). Configure sub-claims on the Akeyless Access Role so only intended workloads can authenticate. See `examples/example-jwt.yaml`.
+
 ## Installation
 
 ### Prerequisites
