@@ -3,18 +3,32 @@ package config
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
+	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/akeylesslabs/akeyless-go/v4"
 	"github.com/akeylesslabs/akeyless-go-cloud-id/cloudprovider/aws"
 	"github.com/akeylesslabs/akeyless-go-cloud-id/cloudprovider/azure"
 	"github.com/akeylesslabs/akeyless-go-cloud-id/cloudprovider/gcp"
 )
+
+// saTokenEntry is one audience entry from csi.storage.k8s.io/serviceAccount.tokens.
+type saTokenEntry struct {
+	Token               string    `json:"token"`
+	ExpirationTimestamp time.Time `json:"expirationTimestamp"`
+}
+
+// jwtNow is the clock used for ServiceAccount token expiry checks (overridable in tests).
+var jwtNow = time.Now
 
 // DefServiceAccountFile is the projected ServiceAccount token path used for
 // Kubernetes (k8s) authentication. Overridable in tests.
@@ -149,8 +163,8 @@ func (c *Config) authWithK8S(ctx context.Context, aklClient *akeyless.V2ApiServi
 }
 
 // authWithJWT authenticates using an Akeyless OAuth2.0/JWT auth method
-// (API access-type=jwt). Requires an explicit JWT from the mount CSI secret
-// or AKEYLESS_JWT. The JWT itself is never logged.
+// (API access-type=jwt) with the workload pod's ServiceAccount token from
+// csi.storage.k8s.io/serviceAccount.tokens. The JWT itself is never logged.
 func (c *Config) authWithJWT(ctx context.Context, aklClient *akeyless.V2ApiService) error {
 	jwtToken, err := c.resolveJWT()
 	if err != nil {
@@ -160,32 +174,111 @@ func (c *Config) authWithJWT(ctx context.Context, aklClient *akeyless.V2ApiServi
 	authBody := akeyless.NewAuthWithDefaults()
 	authBody.SetAccessType(string(JWT))
 	authBody.SetJwt(jwtToken)
-	err = c.authenticate(ctx, aklClient, authBody)
+	authOut, httpResp, err := aklClient.Auth(ctx).Body(*authBody).Execute()
 	if err != nil {
-		// Do not include the JWT or raw API/error body in logs or returned errors.
-		log.Printf("authWithJWT ERR: authentication failed against %s", c.AkeylessGatewayURL)
-		return fmt.Errorf("jwt/oauth2 authentication failed against %s", c.AkeylessGatewayURL)
+		status, reason := jwtAuthFailureDetail(httpResp, err)
+		log.Printf("authWithJWT ERR: authentication failed against %s: %s, %s", c.AkeylessGatewayURL, status, reason)
+		return fmt.Errorf("jwt/oauth2 authentication failed against %s: %s, %s", c.AkeylessGatewayURL, status, reason)
 	}
+	c.setAuthToken(authOut.GetToken())
 	return nil
 }
 
-// resolveJWT returns the bearer JWT for oauth2/jwt auth.
-// Priority on each auth attempt (first match wins):
-//  1. CSI secret captured on Config for this mount
-//  2. AKEYLESS_JWT, only when this mount did not set a JWT
+// resolveJWT returns the workload pod ServiceAccount token for the configured
+// audience from csi.storage.k8s.io/serviceAccount.tokens. Static Secret/env
+// JWTs are not used — kubelet rotates these tokens and the CSI driver
+// republishes them on each mount.
 func (c *Config) resolveJWT() (string, error) {
-	if jwt := strings.TrimSpace(c.AkeylessJWT); jwt != "" {
-		return jwt, nil
+	audience := strings.TrimSpace(c.AkeylessJWTAudience)
+	if audience == "" {
+		return "", fmt.Errorf("akeylessJWTAudience is required for jwt/oauth2 authentication")
 	}
-	if jwt := strings.TrimSpace(os.Getenv(AkeylessJWT)); jwt != "" {
-		return jwt, nil
+	raw := strings.TrimSpace(c.ServiceAccountTokensJSON)
+	if raw == "" {
+		return "", fmt.Errorf("missing csi.storage.k8s.io/serviceAccount.tokens; configure tokenRequests on the secrets-store CSIDriver for audience %q", audience)
 	}
-	return "", fmt.Errorf("empty JWT for oauth2/jwt auth (set CSI secret akeylessJWT or env %s)", AkeylessJWT)
+
+	var tokens map[string]saTokenEntry
+	if err := json.Unmarshal([]byte(raw), &tokens); err != nil {
+		return "", fmt.Errorf("invalid csi.storage.k8s.io/serviceAccount.tokens JSON: %w", err)
+	}
+	entry, ok := tokens[audience]
+	if !ok {
+		return "", fmt.Errorf("no ServiceAccount token for audience %q in csi.storage.k8s.io/serviceAccount.tokens", audience)
+	}
+	token := strings.TrimSpace(entry.Token)
+	if token == "" {
+		return "", fmt.Errorf("empty ServiceAccount token for audience %q", audience)
+	}
+	if !entry.ExpirationTimestamp.IsZero() && !entry.ExpirationTimestamp.After(jwtNow()) {
+		return "", fmt.Errorf("ServiceAccount token for audience %q expired at %s", audience, entry.ExpirationTimestamp.UTC().Format(time.RFC3339))
+	}
+	return token, nil
 }
 
-// hasExplicitJWT reports whether this mount supplied a JWT via CSI secret or env.
-func (c *Config) hasExplicitJWT() bool {
-	return strings.TrimSpace(c.AkeylessJWT) != "" || strings.TrimSpace(os.Getenv(AkeylessJWT)) != ""
+// hasWorkloadJWT reports whether this mount has an audience and a
+// serviceAccount.tokens payload so jwt/oauth2 can be attempted.
+func (c *Config) hasWorkloadJWT() bool {
+	return strings.TrimSpace(c.AkeylessJWTAudience) != "" && strings.TrimSpace(c.ServiceAccountTokensJSON) != ""
+}
+
+// jwtAuthFailureDetail returns an HTTP status and a short safe reason for
+// jwt/oauth2 auth failures. It never includes the JWT or raw response body.
+func jwtAuthFailureDetail(httpResp *http.Response, err error) (status, reason string) {
+	status = "unknown"
+	reason = "authentication failed"
+	if httpResp != nil {
+		status = strconv.Itoa(httpResp.StatusCode)
+		switch {
+		case httpResp.StatusCode == http.StatusUnauthorized:
+			reason = "token expired or invalid"
+		case httpResp.StatusCode == http.StatusForbidden:
+			reason = "forbidden"
+		case httpResp.StatusCode >= 500:
+			reason = "gateway error"
+		default:
+			reason = "request failed"
+		}
+	} else if err != nil {
+		reason = "request failed"
+	}
+
+	var apiErr akeyless.GenericOpenAPIError
+	if errors.As(err, &apiErr) {
+		if status == "unknown" {
+			// SDK often sets Error() to the HTTP status line, e.g. "401 Unauthorized".
+			if code, ok := leadingHTTPStatus(apiErr.Error()); ok {
+				status = strconv.Itoa(code)
+				if code == http.StatusUnauthorized {
+					reason = "token expired or invalid"
+				}
+			}
+		}
+		if m, ok := apiErr.Model().(akeyless.JSONError); ok {
+			msg := strings.ToLower(m.GetError())
+			switch {
+			case strings.Contains(msg, "expir"):
+				reason = "token expired"
+			case strings.Contains(msg, "audience"):
+				reason = "audience mismatch"
+			case strings.Contains(msg, "issuer"):
+				reason = "untrusted issuer"
+			}
+		}
+	}
+	return status, reason
+}
+
+func leadingHTTPStatus(s string) (int, bool) {
+	s = strings.TrimSpace(s)
+	if len(s) < 3 {
+		return 0, false
+	}
+	code, err := strconv.Atoi(s[:3])
+	if err != nil || code < 100 || code > 599 {
+		return 0, false
+	}
+	return code, true
 }
 
 func (c *Config) rotateUIDToken(ctx context.Context, aklClient *akeyless.V2ApiService) error {

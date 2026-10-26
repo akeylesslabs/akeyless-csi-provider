@@ -26,9 +26,10 @@ const (
 	AkeylessGCPAudience       = "AKEYLESS_GCP_AUDIENCE"
 	AkeylessUIDInitToken      = "AKEYLESS_UID_INIT_TOKEN"
 	AkeylessK8sAuthConfigName = "AKEYLESS_K8S_AUTH_CONFIG_NAME"
-	// AkeylessJWT is an optional bearer JWT for access-type jwt/oauth2
-	// when not supplied via the CSI nodePublishSecretRef secret.
-	AkeylessJWT = "AKEYLESS_JWT"
+
+	// CSI attribute carrying kubelet-issued pod ServiceAccount tokens
+	// (JSON map of audience -> {token, expirationTimestamp}).
+	csiServiceAccountTokensAttr = "csi.storage.k8s.io/serviceAccount.tokens"
 )
 
 type accessType string
@@ -79,10 +80,14 @@ type Parameters struct {
 	AkeylessGCPAudience       string
 	AkeylessUIDInitToken      string
 	AkeylessK8sAuthConfigName string
-	// AkeylessJWT holds a bearer JWT for oauth2/jwt auth from the CSI driver
-	// secrets payload (nodePublishSecretRef) only. Env AKEYLESS_JWT is read
-	// live in resolveJWT when this field is empty. Never from SPC parameters.
-	AkeylessJWT string
+	// AkeylessJWTAudience selects which entry to use from
+	// csi.storage.k8s.io/serviceAccount.tokens. Must match a tokenRequests
+	// audience on the secrets-store CSIDriver and the Akeyless OAuth2/JWT
+	// auth-method audience (if configured).
+	AkeylessJWTAudience string
+	// ServiceAccountTokensJSON is the raw
+	// csi.storage.k8s.io/serviceAccount.tokens mount attribute from kubelet.
+	ServiceAccountTokensJSON string
 
 	// accessTypeExplicit is true when akeylessAccessType came from SPC params
 	// or AKEYLESS_ACCESS_TYPE (not the access_key default).
@@ -195,15 +200,14 @@ func parseParameters(secretStr, parametersStr string, defaultAkeylessGatewayURL 
 	parameters.AkeylessGCPAudience = params["akeylessGCPAudience"]
 	parameters.AkeylessUIDInitToken = params["akeylessUIDInitToken"]
 	parameters.AkeylessK8sAuthConfigName = params["akeylessK8sAuthConfigName"]
-	// Intentionally do not accept akeylessJWT from SPC parameters (attrs are
-	// often stored in etcd). Mount JWT comes from CSI secrets only; env is
-	// read live in resolveJWT when the mount secret is unset.
+	parameters.AkeylessJWTAudience = params["akeylessJWTAudience"]
+	parameters.ServiceAccountTokensJSON = params[csiServiceAccountTokensAttr]
+	// Do not accept a static JWT from SPC parameters or nodePublishSecretRef:
+	// those values expire and are not rotated. jwt/oauth2 uses the pod's
+	// ServiceAccount token from csi.storage.k8s.io/serviceAccount.tokens.
 
 	if parameters.AkeylessAccessKey == "" && secret != nil {
 		parameters.AkeylessAccessKey = secret["akeylessAccessKey"]
-	}
-	if secret != nil {
-		parameters.AkeylessJWT = secret["akeylessJWT"]
 	}
 
 	secretsYaml := params["objects"]
@@ -322,8 +326,8 @@ func (c *Config) validate() error {
 		if c.AkeylessAccessID == "" {
 			return errors.New("akeylessAccessID is required for jwt/oauth2 authentication")
 		}
-		if !c.hasExplicitJWT() {
-			return errors.New("jwt/oauth2 requires CSI secret akeylessJWT or env AKEYLESS_JWT")
+		if _, err := c.resolveJWT(); err != nil {
+			return err
 		}
 	}
 
@@ -418,8 +422,8 @@ func (c *Config) detectAccessType(aklClient *akeyless.V2ApiService) accessType {
 		return K8S
 	}
 
-	// Only probe JWT when this mount actually supplied a token (CSI secret or env).
-	if c.hasExplicitJWT() {
+	// Only probe JWT when this mount has a workload SA token for the audience.
+	if c.hasWorkloadJWT() {
 		if err := c.authWithJWT(context.Background(), aklClient); err == nil {
 			return JWT
 		}

@@ -1,22 +1,33 @@
 # Example: Akeyless OAuth2.0/JWT authentication for the CSI provider.
 #
-# Create an Akeyless auth method that trusts your cluster OIDC JWKS, e.g.:
-#   akeyless auth-method create oauth2 \
-#     --name /k8s/cluster-oidc \
-#     --jwks-uri https://oidc.eks.<region>.amazonaws.com/id/<ID>/keys \
-#     --unique-identifier sub
+# The JWT must be the workload pod's own ServiceAccount token, issued and
+# rotated by kubelet. Do NOT put a static JWT in a Secret or DaemonSet env —
+# those expire and are never refreshed.
 #
-# Bind sub-claims to the ServiceAccount that owns the JWT passed in
-# nodePublishSecretRef (key akeylessJWT).
-# Prefer short-lived projected ServiceAccount tokens over static JWTs.
+# 1) Create an Akeyless OAuth2/JWT auth method that trusts the cluster OIDC JWKS:
+#      akeyless auth-method create oauth2 \
+#        --name /k8s/cluster-oidc \
+#        --jwks-uri https://oidc.eks.<region>.amazonaws.com/id/<ID>/keys \
+#        --unique-identifier sub
+#    Bind Access Role sub-claims to the workload ServiceAccount (e.g. sub).
 #
-# Token sources (first match wins):
-#   1. CSI secret key "akeylessJWT" for this mount
-#   2. Env AKEYLESS_JWT on the provider, only if this mount did not
-#      set akeylessJWT (one identity for every such mount)
+# 2) Configure tokenRequests on the secrets-store CSIDriver so kubelet mints
+#    a token for your audience (must match akeylessJWTAudience below):
 #
-# Do NOT put the JWT in SecretProviderClass parameters (stored in etcd).
-# Do NOT fall back to the provider ServiceAccount token.
+#      kubectl patch csidriver secrets-store.csi.k8s.io --type=merge -p '{
+#        "spec": {
+#          "tokenRequests": [{"audience":"akeyless.io","expirationSeconds":3600}],
+#          "requiresRepublish": true
+#        }
+#      }'
+#
+#    Or with the driver Helm chart:
+#      --set tokenRequests[0].audience=akeyless.io \
+#      --set tokenRequests[0].expirationSeconds=3600 \
+#      --set enableSecretRotation=true
+#
+# The CSI driver passes the token in csi.storage.k8s.io/serviceAccount.tokens
+# on every mount/republish. The provider selects it by akeylessJWTAudience.
 apiVersion: secrets-store.csi.x-k8s.io/v1
 kind: SecretProviderClass
 metadata:
@@ -27,6 +38,8 @@ spec:
     akeylessGatewayURL: "https://api.akeyless.io"
     akeylessAccessID: "<oauth2/jwt auth-method access id>"
     akeylessAccessType: "jwt" # alias: oauth2
+    # Must match a CSIDriver tokenRequests audience.
+    akeylessJWTAudience: "akeyless.io"
     objects: |
       - secretPath: "/full/path/to/secret/item"
         fileName: "local-secret-filename"
@@ -36,6 +49,7 @@ kind: Pod
 metadata:
   name: test-csi-jwt
 spec:
+  serviceAccountName: default
   containers:
     - name: alpine
       image: alpine
@@ -51,7 +65,3 @@ spec:
         readOnly: true
         volumeAttributes:
           secretProviderClass: "akeyless-jwt-example"
-        # JWT for this mount. Key must be "akeylessJWT".
-        # Use a short-lived projected token for the workload ServiceAccount.
-        nodePublishSecretRef:
-          name: akeyless-jwt

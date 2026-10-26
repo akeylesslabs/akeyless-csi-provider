@@ -1,9 +1,11 @@
 package config
 
 import (
-	"os"
-	"path/filepath"
+	"encoding/json"
+	"errors"
+	"net/http"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -24,38 +26,34 @@ func TestParseParameters_NormalizesOAuth2Alias(t *testing.T) {
 	require.Equal(t, "p-jwt", got.AkeylessAccessID)
 }
 
-func TestParseParameters_JWTFromCSISecretNotFromAttributes(t *testing.T) {
-	// Isolate from process env so we only assert SPC attributes are ignored.
-	t.Setenv(AkeylessJWT, "")
-
-	// JWT in SPC attributes must be ignored (avoid etcd-stored bearer tokens).
-	attrs := `{"akeylessAccessType":"jwt","akeylessAccessID":"p-jwt","akeylessJWT":"should-be-ignored","objects":"- secretPath: /x\n  fileName: x"}`
-	got, err := parseParameters("", attrs, defaultAkeylessGatewayURL, defaultVaultKubernetesMountPath)
+func TestParseParameters_ReadsServiceAccountTokensAndAudience(t *testing.T) {
+	tokens := map[string]saTokenEntry{
+		"akeyless.io": {
+			Token:               "pod.sa.token",
+			ExpirationTimestamp: time.Now().Add(time.Hour),
+		},
+	}
+	tokensJSON, err := json.Marshal(tokens)
 	require.NoError(t, err)
-	require.Empty(t, got.AkeylessJWT)
+
+	attrs := map[string]string{
+		"akeylessAccessType":            "jwt",
+		"akeylessAccessID":              "p-jwt",
+		"akeylessJWTAudience":           "akeyless.io",
+		"akeylessJWT":                   "should-be-ignored",
+		csiServiceAccountTokensAttr:     string(tokensJSON),
+		"objects":                       "- secretPath: /x\n  fileName: x",
+	}
+	paramsBytes, err := json.Marshal(attrs)
+	require.NoError(t, err)
+
+	// Static JWT in CSI secret must also be ignored.
+	secrets := `{"akeylessJWT":"static.should.ignore"}`
+	got, err := parseParameters(secrets, string(paramsBytes), defaultAkeylessGatewayURL, defaultVaultKubernetesMountPath)
+	require.NoError(t, err)
+	require.Equal(t, "akeyless.io", got.AkeylessJWTAudience)
+	require.Equal(t, string(tokensJSON), got.ServiceAccountTokensJSON)
 	require.True(t, got.accessTypeExplicit)
-
-	secrets := `{"akeylessJWT":"header.payload.sig"}`
-	got, err = parseParameters(secrets, attrs, defaultAkeylessGatewayURL, defaultVaultKubernetesMountPath)
-	require.NoError(t, err)
-	require.Equal(t, "header.payload.sig", got.AkeylessJWT)
-}
-
-func TestResolveJWT_FromEnvWhenMountSecretEmpty(t *testing.T) {
-	t.Setenv(AkeylessJWT, "env.jwt.token")
-	cfg := &Config{}
-	got, err := cfg.resolveJWT()
-	require.NoError(t, err)
-	require.Equal(t, "env.jwt.token", got)
-	require.True(t, cfg.hasExplicitJWT())
-}
-
-func TestResolveJWT_PrefersMountSecretOverEnv(t *testing.T) {
-	t.Setenv(AkeylessJWT, "live.env.jwt")
-	cfg := &Config{Parameters: Parameters{AkeylessJWT: "mount.csi.jwt"}}
-	got, err := cfg.resolveJWT()
-	require.NoError(t, err)
-	require.Equal(t, "mount.csi.jwt", got)
 }
 
 func TestParseParameters_AccessTypeExplicitFlag(t *testing.T) {
@@ -73,30 +71,111 @@ func TestParseParameters_AccessTypeExplicitFlag(t *testing.T) {
 	require.True(t, got.accessTypeExplicit)
 }
 
-func TestResolveJWT_IgnoresServiceAccountFile(t *testing.T) {
-	t.Setenv(AkeylessJWT, "")
-	dir := t.TempDir()
-	tokenPath := filepath.Join(dir, "token")
-	require.NoError(t, os.WriteFile(tokenPath, []byte("  sa.jwt.token\n"), 0o600))
+func TestResolveJWT_SelectsTokenByAudience(t *testing.T) {
+	tokens := map[string]saTokenEntry{
+		"other": {
+			Token:               "wrong.token",
+			ExpirationTimestamp: time.Now().Add(time.Hour),
+		},
+		"akeyless.io": {
+			Token:               "correct.token",
+			ExpirationTimestamp: time.Now().Add(time.Hour),
+		},
+	}
+	raw, err := json.Marshal(tokens)
+	require.NoError(t, err)
 
-	orig := DefServiceAccountFile
-	DefServiceAccountFile = tokenPath
-	t.Cleanup(func() { DefServiceAccountFile = orig })
-
-	cfg := &Config{}
-	_, err := cfg.resolveJWT()
-	require.Error(t, err)
+	cfg := &Config{Parameters: Parameters{
+		AkeylessJWTAudience:      "akeyless.io",
+		ServiceAccountTokensJSON: string(raw),
+	}}
+	got, err := cfg.resolveJWT()
+	require.NoError(t, err)
+	require.Equal(t, "correct.token", got)
+	require.True(t, cfg.hasWorkloadJWT())
 }
 
-func TestResolveJWT_EmptySourcesError(t *testing.T) {
-	t.Setenv(AkeylessJWT, "")
-	cfg := &Config{}
+func TestResolveJWT_MissingAudienceError(t *testing.T) {
+	cfg := &Config{Parameters: Parameters{
+		ServiceAccountTokensJSON: `{"akeyless.io":{"token":"t","expirationTimestamp":"2099-01-01T00:00:00Z"}}`,
+	}}
 	_, err := cfg.resolveJWT()
 	require.Error(t, err)
+	require.Contains(t, err.Error(), "akeylessJWTAudience")
 }
 
-func TestValidate_JWTRequiresAccessIDAndToken(t *testing.T) {
-	t.Setenv(AkeylessJWT, "")
+func TestResolveJWT_AudienceNotInTokensError(t *testing.T) {
+	cfg := &Config{Parameters: Parameters{
+		AkeylessJWTAudience:      "missing-aud",
+		ServiceAccountTokensJSON: `{"akeyless.io":{"token":"t","expirationTimestamp":"2099-01-01T00:00:00Z"}}`,
+	}}
+	_, err := cfg.resolveJWT()
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "missing-aud")
+}
+
+func TestResolveJWT_ExpiredTokenError(t *testing.T) {
+	orig := jwtNow
+	jwtNow = func() time.Time { return time.Date(2026, 10, 26, 12, 0, 0, 0, time.UTC) }
+	t.Cleanup(func() { jwtNow = orig })
+
+	tokens := map[string]saTokenEntry{
+		"akeyless.io": {
+			Token:               "expired.token",
+			ExpirationTimestamp: time.Date(2026, 10, 26, 11, 0, 0, 0, time.UTC),
+		},
+	}
+	raw, err := json.Marshal(tokens)
+	require.NoError(t, err)
+
+	cfg := &Config{Parameters: Parameters{
+		AkeylessJWTAudience:      "akeyless.io",
+		ServiceAccountTokensJSON: string(raw),
+	}}
+	_, err = cfg.resolveJWT()
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "expired")
+}
+
+func TestResolveJWT_UsesRotatedTokenOnNextMount(t *testing.T) {
+	makeTokens := func(token string) string {
+		tokens := map[string]saTokenEntry{
+			"akeyless.io": {
+				Token:               token,
+				ExpirationTimestamp: time.Now().Add(time.Hour),
+			},
+		}
+		raw, err := json.Marshal(tokens)
+		require.NoError(t, err)
+		return string(raw)
+	}
+
+	first := &Config{Parameters: Parameters{
+		AkeylessJWTAudience:      "akeyless.io",
+		ServiceAccountTokensJSON: makeTokens("token.v1"),
+	}}
+	got, err := first.resolveJWT()
+	require.NoError(t, err)
+	require.Equal(t, "token.v1", got)
+
+	// A remount parses a fresh Config with kubelet's rotated token.
+	second := &Config{Parameters: Parameters{
+		AkeylessJWTAudience:      "akeyless.io",
+		ServiceAccountTokensJSON: makeTokens("token.v2"),
+	}}
+	got, err = second.resolveJWT()
+	require.NoError(t, err)
+	require.Equal(t, "token.v2", got)
+}
+
+func TestResolveJWT_MissingTokensError(t *testing.T) {
+	cfg := &Config{Parameters: Parameters{AkeylessJWTAudience: "akeyless.io"}}
+	_, err := cfg.resolveJWT()
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "serviceAccount.tokens")
+}
+
+func TestValidate_JWTRequiresAccessIDAudienceAndToken(t *testing.T) {
 	cfg := Config{
 		TargetPath: "/mnt",
 		Parameters: Parameters{
@@ -109,7 +188,18 @@ func TestValidate_JWTRequiresAccessIDAndToken(t *testing.T) {
 	cfg.AkeylessAccessID = "p-jwt"
 	require.Error(t, cfg.validate())
 
-	cfg.AkeylessJWT = "header.payload.sig"
+	cfg.AkeylessJWTAudience = "akeyless.io"
+	require.Error(t, cfg.validate())
+
+	tokens := map[string]saTokenEntry{
+		"akeyless.io": {
+			Token:               "pod.sa.token",
+			ExpirationTimestamp: time.Now().Add(time.Hour),
+		},
+	}
+	raw, err := json.Marshal(tokens)
+	require.NoError(t, err)
+	cfg.ServiceAccountTokensJSON = string(raw)
 	require.NoError(t, cfg.validate())
 }
 
@@ -120,4 +210,22 @@ func TestUsingJWT(t *testing.T) {
 	require.True(t, cfg.UsingJWT())
 	cfg.AkeylessAccessType = "k8s"
 	require.False(t, cfg.UsingJWT())
+}
+
+func TestJWTAuthFailureDetail(t *testing.T) {
+	status, reason := jwtAuthFailureDetail(&http.Response{StatusCode: 401}, nil)
+	require.Equal(t, "401", status)
+	require.Equal(t, "token expired or invalid", reason)
+
+	status, reason = jwtAuthFailureDetail(&http.Response{StatusCode: 403}, nil)
+	require.Equal(t, "403", status)
+	require.Equal(t, "forbidden", reason)
+
+	status, reason = jwtAuthFailureDetail(nil, errors.New("dial tcp: connection refused"))
+	require.Equal(t, "unknown", status)
+	require.Equal(t, "request failed", reason)
+
+	code, ok := leadingHTTPStatus("401 Unauthorized")
+	require.True(t, ok)
+	require.Equal(t, 401, code)
 }

@@ -25,18 +25,19 @@ Supported `akeylessAccessType` values:
 | `gcp` | GCP workload identity (`akeylessGCPAudience`). |
 | `universal_identity` | Universal Identity init token. |
 
-If `akeylessAccessType` is omitted, the provider auto-detects among access key / cloud / k8s / jwt / universal identity (legacy behavior). JWT is only probed when a JWT was supplied via CSI secret or `AKEYLESS_JWT`.
+If `akeylessAccessType` is omitted, the provider auto-detects among access key / cloud / k8s / jwt / universal identity (legacy behavior). JWT is only probed when `akeylessJWTAudience` and `csi.storage.k8s.io/serviceAccount.tokens` are present.
 
 ### OAuth2.0 / JWT
 
-Set `akeylessAccessType: jwt` (or `oauth2`) and the auth-method `akeylessAccessID`.
+Set `akeylessAccessType: jwt` (or `oauth2`), the auth-method `akeylessAccessID`, and `akeylessJWTAudience`.
 
-Token sources on each auth (first match wins):
+The JWT is the **workload pod's ServiceAccount token**, issued and rotated by kubelet:
 
-1. CSI `nodePublishSecretRef` secret key `akeylessJWT` (this mount only; updated when the driver republishes)
-2. Provider env `AKEYLESS_JWT`, only when this mount did not set `akeylessJWT` (one identity for every such mount on the node)
+1. Configure `tokenRequests` (audience + optional `expirationSeconds`) on the `secrets-store.csi.k8s.io` CSIDriver, and prefer `requiresRepublish: true` so remounts get a fresh token.
+2. Set SPC `akeylessJWTAudience` to that same audience.
+3. Bind the Akeyless OAuth2/JWT auth method to the cluster OIDC issuer/JWKS, and Access Role sub-claims to the workload ServiceAccount.
 
-Do **not** fall back to the provider ServiceAccount token, and do **not** put the JWT in `SecretProviderClass` parameters (those are stored in etcd). Bind Access Role sub-claims to the ServiceAccount that owns the JWT in `akeylessJWT`. See `examples/example-jwt.yaml`.
+The CSI driver passes tokens in `csi.storage.k8s.io/serviceAccount.tokens` on every mount. Static JWTs in Secrets or DaemonSet env are not used (they expire and are not rotated). See `examples/example-jwt.yaml`.
 
 ## Installation
 
