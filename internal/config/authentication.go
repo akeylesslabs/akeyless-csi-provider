@@ -160,8 +160,14 @@ func (c *Config) authWithJWT(ctx context.Context, aklClient *akeyless.V2ApiServi
 }
 
 // resolveJWT returns the bearer JWT for oauth2/jwt auth.
-// Priority: configured value (CSI secret / env) > provider SA token file.
+// Priority on each auth/renewal attempt:
+//  1. live AKEYLESS_JWT env (re-read so env rotation works without remount)
+//  2. CSI secret value captured on Config at mount (remount to rotate)
+//  3. provider ServiceAccount token file (re-read so kubelet rotation works)
 func (c *Config) resolveJWT() (string, error) {
+	if jwt := strings.TrimSpace(os.Getenv(AkeylessJWT)); jwt != "" {
+		return jwt, nil
+	}
 	if jwt := strings.TrimSpace(c.AkeylessJWT); jwt != "" {
 		return jwt, nil
 	}

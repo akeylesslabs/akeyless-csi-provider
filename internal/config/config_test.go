@@ -117,6 +117,7 @@ func TestParseConfig(t *testing.T) {
 				FilePermission: 420,
 				Parameters: func() Parameters {
 					expected := defaultParams
+					expected.accessTypeExplicit = true
 					expected.Secrets = []Secret{
 						{"bar1", "/foo/bar", "", nil},
 					}
@@ -139,6 +140,7 @@ func TestParseConfig(t *testing.T) {
 				FilePermission: 420,
 				Parameters: func() Parameters {
 					expected := defaultParams
+					expected.accessTypeExplicit = true
 					expected.AkeylessAccessType = "aws"
 					expected.AkeylessGatewayURL = "my-vault-address"
 					expected.VaultKubernetesMountPath = "my-mount-path"

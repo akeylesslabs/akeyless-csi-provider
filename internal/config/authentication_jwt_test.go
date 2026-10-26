@@ -25,11 +25,15 @@ func TestParseParameters_NormalizesOAuth2Alias(t *testing.T) {
 }
 
 func TestParseParameters_JWTFromCSISecretNotFromAttributes(t *testing.T) {
+	// Isolate from process env so we only assert SPC attributes are ignored.
+	t.Setenv(AkeylessJWT, "")
+
 	// JWT in SPC attributes must be ignored (avoid etcd-stored bearer tokens).
 	attrs := `{"akeylessAccessType":"jwt","akeylessAccessID":"p-jwt","akeylessJWT":"should-be-ignored","objects":"- secretPath: /x\n  fileName: x"}`
 	got, err := parseParameters("", attrs, defaultAkeylessGatewayURL, defaultVaultKubernetesMountPath)
 	require.NoError(t, err)
 	require.Empty(t, got.AkeylessJWT)
+	require.True(t, got.accessTypeExplicit)
 
 	secrets := `{"akeylessJWT":"header.payload.sig"}`
 	got, err = parseParameters(secrets, attrs, defaultAkeylessGatewayURL, defaultVaultKubernetesMountPath)
@@ -46,13 +50,38 @@ func TestParseParameters_JWTFromEnv(t *testing.T) {
 }
 
 func TestResolveJWT_PrefersConfiguredOverFile(t *testing.T) {
+	t.Setenv(AkeylessJWT, "")
 	cfg := &Config{Parameters: Parameters{AkeylessJWT: "  configured.jwt  "}}
 	got, err := cfg.resolveJWT()
 	require.NoError(t, err)
 	require.Equal(t, "configured.jwt", got)
 }
 
+func TestResolveJWT_PrefersLiveEnvOverConfigured(t *testing.T) {
+	t.Setenv(AkeylessJWT, "live.env.jwt")
+	cfg := &Config{Parameters: Parameters{AkeylessJWT: "stale.csi.jwt"}}
+	got, err := cfg.resolveJWT()
+	require.NoError(t, err)
+	require.Equal(t, "live.env.jwt", got)
+}
+
+func TestParseParameters_AccessTypeExplicitFlag(t *testing.T) {
+	t.Setenv(AkeylessAccessType, "")
+	omitted := `{"akeylessAccessID":"p-1","objects":"- secretPath: /x\n  fileName: x"}`
+	got, err := parseParameters("", omitted, defaultAkeylessGatewayURL, defaultVaultKubernetesMountPath)
+	require.NoError(t, err)
+	require.Equal(t, "access_key", got.AkeylessAccessType)
+	require.False(t, got.accessTypeExplicit)
+
+	explicit := `{"akeylessAccessType":"aws_iam","akeylessAccessID":"p-1","objects":"- secretPath: /x\n  fileName: x"}`
+	got, err = parseParameters("", explicit, defaultAkeylessGatewayURL, defaultVaultKubernetesMountPath)
+	require.NoError(t, err)
+	require.Equal(t, "aws_iam", got.AkeylessAccessType)
+	require.True(t, got.accessTypeExplicit)
+}
+
 func TestResolveJWT_ReadsServiceAccountFile(t *testing.T) {
+	t.Setenv(AkeylessJWT, "")
 	dir := t.TempDir()
 	tokenPath := filepath.Join(dir, "token")
 	require.NoError(t, os.WriteFile(tokenPath, []byte("  sa.jwt.token\n"), 0o600))
@@ -68,6 +97,7 @@ func TestResolveJWT_ReadsServiceAccountFile(t *testing.T) {
 }
 
 func TestResolveJWT_EmptySourcesError(t *testing.T) {
+	t.Setenv(AkeylessJWT, "")
 	dir := t.TempDir()
 	tokenPath := filepath.Join(dir, "token")
 	require.NoError(t, os.WriteFile(tokenPath, []byte("   \n"), 0o600))

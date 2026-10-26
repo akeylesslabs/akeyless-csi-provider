@@ -9,11 +9,11 @@
 # Bind sub-claims (namespace, serviceaccount, etc.) on the Access Role.
 # Prefer short-lived projected ServiceAccount tokens over static JWTs.
 #
-# Token sources (first match wins):
-#   1. CSI driver secret key "akeylessJWT" (from a Kubernetes Secret)
-#   2. Env AKEYLESS_JWT on the provider DaemonSet
+# Token sources on each auth/renewal (first match wins):
+#   1. Live env AKEYLESS_JWT on the provider DaemonSet (re-read on renewal)
+#   2. CSI driver secret key "akeylessJWT" captured at mount (remount to rotate)
 #   3. Provider pod ServiceAccount token at
-#      /var/run/secrets/kubernetes.io/serviceaccount/token
+#      /var/run/secrets/kubernetes.io/serviceaccount/token (re-read on renewal)
 #
 # Do NOT put the JWT in SecretProviderClass parameters (stored in etcd).
 apiVersion: secrets-store.csi.x-k8s.io/v1

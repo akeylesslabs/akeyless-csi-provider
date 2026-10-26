@@ -8,7 +8,7 @@ Supported `akeylessAccessType` values:
 
 | Type | Notes |
 | --- | --- |
-| `access_key` | API key. Prefer `AKEYLESS_ACCESS_KEY` env over SPC parameters. |
+| `access_key` | API key. SPC/`nodePublishSecretRef` value wins if set; otherwise `AKEYLESS_ACCESS_KEY` / `CREDENTIALS`. Prefer env-only (omit from SPC). |
 | `k8s` | Kubernetes auth via Gateway config (`akeylessK8sAuthConfigName`). |
 | `jwt` / `oauth2` | [OAuth2.0/JWT](https://docs.akeyless.io/docs/auth-with-oauth-jwt) auth method. |
 | `aws_iam` | AWS IAM cloud identity. |
@@ -16,15 +16,17 @@ Supported `akeylessAccessType` values:
 | `gcp` | GCP workload identity (`akeylessGCPAudience`). |
 | `universal_identity` | Universal Identity init token. |
 
+If `akeylessAccessType` is omitted, the provider auto-detects among access key / cloud / k8s / jwt / universal identity (legacy behavior).
+
 ### OAuth2.0 / JWT
 
 Set `akeylessAccessType: jwt` (or `oauth2`) and the auth-method `akeylessAccessID`.
 
-Token sources (first match wins):
+Token sources on each auth/renewal (first match wins):
 
-1. CSI `nodePublishSecretRef` secret key `akeylessJWT`
-2. Provider env `AKEYLESS_JWT`
-3. Provider ServiceAccount token at `/var/run/secrets/kubernetes.io/serviceaccount/token`
+1. Live provider env `AKEYLESS_JWT` (re-read on renewal)
+2. CSI `nodePublishSecretRef` secret key `akeylessJWT` captured at mount (remount to rotate)
+3. Provider ServiceAccount token at `/var/run/secrets/kubernetes.io/serviceaccount/token` (re-read on renewal)
 
 Do **not** put the JWT in `SecretProviderClass` parameters (those are stored in etcd). Configure sub-claims on the Akeyless Access Role so only intended workloads can authenticate. See `examples/example-jwt.yaml`.
 

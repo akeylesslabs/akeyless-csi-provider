@@ -83,9 +83,13 @@ type Parameters struct {
 	AkeylessUIDInitToken      string
 	AkeylessK8sAuthConfigName string
 	// AkeylessJWT holds a bearer JWT for oauth2/jwt auth when supplied via the
-	// CSI driver secrets payload or AKEYLESS_JWT. It is never read from SPC
-	// parameters to avoid embedding long-lived tokens in the CR.
+	// CSI driver secrets payload (captured at mount). Live env AKEYLESS_JWT is
+	// re-read on each auth. Never read from SPC parameters (etcd).
 	AkeylessJWT string
+
+	// accessTypeExplicit is true when akeylessAccessType came from SPC params
+	// or AKEYLESS_ACCESS_TYPE (not the access_key default).
+	accessTypeExplicit bool
 }
 
 type TLSConfig struct {
@@ -123,12 +127,22 @@ func Parse(secretStr, parametersStr, targetPath, permissionStr string, defaultVa
 	}
 
 	AklClient = createClient(config.AkeylessGatewayURL)
-	// Initial auth uses only the configured access type (no cross-method probing).
 	// Skip when AccessID is unset so offline unit tests and incomplete configs
 	// can still parse; Mount will fail later without a token.
 	if config.AkeylessAccessID != "" {
-		if err := config.authenticateConfigured(context.Background(), AklClient); err != nil {
-			return Config{}, err
+		if config.accessTypeExplicit {
+			// Explicit type: authenticate only with that method (no probing).
+			if err := config.authenticateConfigured(context.Background(), AklClient); err != nil {
+				return Config{}, err
+			}
+		} else {
+			// Omitted akeylessAccessType: preserve legacy auto-detect so AWS/Azure/GCP/k8s
+			// configs without an access key keep working.
+			detected := config.detectAccessType(AklClient)
+			if detected == "" {
+				return Config{}, fmt.Errorf("failed to detect access type of %s", config.AkeylessAccessID)
+			}
+			config.AkeylessAccessType = string(detected)
 		}
 		log.Printf("successfully authenticated using %s access type", config.AkeylessAccessType)
 	}
@@ -200,6 +214,7 @@ func parseParameters(secretStr, parametersStr string, defaultAkeylessGatewayURL 
 	if parameters.AkeylessAccessType == "" {
 		parameters.AkeylessAccessType = os.Getenv(AkeylessAccessType)
 	}
+	accessTypeExplicit := parameters.AkeylessAccessType != ""
 
 	if parameters.AkeylessAccessID == "" {
 		parameters.AkeylessAccessID = os.Getenv(AkeylessAccessID)
@@ -241,6 +256,7 @@ func parseParameters(secretStr, parametersStr string, defaultAkeylessGatewayURL 
 	if parameters.AkeylessAccessType == "" {
 		parameters.AkeylessAccessType = string(AccessKey)
 	}
+	parameters.accessTypeExplicit = accessTypeExplicit
 
 	if isJWTAccessType(parameters.AkeylessAccessType) {
 		// Normalize oauth2 alias to the API access-type value.
