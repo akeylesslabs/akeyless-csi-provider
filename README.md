@@ -11,6 +11,8 @@ Before authenticating, the provider authorizes `akeylessGatewayURL` against oper
 
 Unlisted gateways are rejected so a tenant SPC cannot redirect provider credentials to an attacker-controlled endpoint. Prefer HTTPS.
 
+**Upgrade note:** SPCs that use a custom `akeylessGatewayURL` will fail on upgrade until that URL is listed in `AKEYLESS_URL` / `--akeyless-address` or `AKEYLESS_ALLOWED_GATEWAY_URLS`.
+
 ## Authentication
 
 Supported `akeylessAccessType` values:

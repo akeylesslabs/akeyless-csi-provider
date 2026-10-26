@@ -326,8 +326,9 @@ func (c *Config) validate() error {
 		if c.AkeylessAccessID == "" {
 			return errors.New("akeylessAccessID is required for jwt/oauth2 authentication")
 		}
-		if _, err := c.resolveJWT(); err != nil {
-			return err
+		// Presence only — parse, expiry check, and the token log line run in authWithJWT.
+		if !c.hasWorkloadJWT() {
+			return errors.New("jwt/oauth2 requires akeylessJWTAudience and csi.storage.k8s.io/serviceAccount.tokens")
 		}
 	}
 
