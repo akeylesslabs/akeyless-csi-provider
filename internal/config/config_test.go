@@ -29,6 +29,7 @@ spec:
 `
 	defaultAkeylessGatewayURL       = "http://127.0.0.1:18888"
 	defaultVaultKubernetesMountPath = "kubernetes"
+	allowedPrivateGatewayURL        = "https://gw.example.com:8080"
 )
 
 func TestParseParametersFromYaml(t *testing.T) {
@@ -93,6 +94,9 @@ func TestParseParameters(t *testing.T) {
 }
 
 func TestParseConfig(t *testing.T) {
+	t.Setenv(AkeylessURL, "")
+	t.Setenv(AkeylessAllowedGatewayURLs, allowedPrivateGatewayURL)
+
 	const targetPath = "/some/path"
 	defaultParams := Parameters{
 		AkeylessGatewayURL:       defaultAkeylessGatewayURL,
@@ -130,7 +134,7 @@ func TestParseConfig(t *testing.T) {
 			targetPath: targetPath,
 			parameters: map[string]string{
 				"akeylessAccessType":           "aws",
-				"akeylessGatewayURL":           "my-vault-address",
+				"akeylessGatewayURL":           allowedPrivateGatewayURL,
 				"vaultKubernetesMountPath":     "my-mount-path",
 				"KubernetesServiceAccountPath": "my-account-path",
 				"objects":                      objects,
@@ -142,7 +146,7 @@ func TestParseConfig(t *testing.T) {
 					expected := defaultParams
 					expected.accessTypeExplicit = true
 					expected.AkeylessAccessType = "aws"
-					expected.AkeylessGatewayURL = "my-vault-address"
+					expected.AkeylessGatewayURL = allowedPrivateGatewayURL
 					expected.VaultKubernetesMountPath = "my-mount-path"
 					expected.Secrets = []Secret{
 						{"bar1", "/foo/bar", "", nil},
@@ -159,6 +163,20 @@ func TestParseConfig(t *testing.T) {
 		cfg.session = nil // session is mount-local; ignore for structural equality
 		require.Equal(t, tc.expected, cfg)
 	}
+}
+
+func TestParse_RejectsUntrustedGateway(t *testing.T) {
+	t.Setenv(AkeylessURL, "")
+	t.Setenv(AkeylessAllowedGatewayURLs, "")
+	params, err := json.Marshal(map[string]string{
+		"akeylessAccessType": "access_key",
+		"akeylessGatewayURL": "https://evil.example",
+		"objects":            objects,
+	})
+	require.NoError(t, err)
+	_, err = Parse("", string(params), "/mnt", "420", defaultAkeylessGatewayURL, defaultVaultKubernetesMountPath)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "not allowed")
 }
 
 func TestParseConfig_Errors(t *testing.T) {

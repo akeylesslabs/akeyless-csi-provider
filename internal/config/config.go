@@ -123,6 +123,14 @@ func Parse(secretStr, parametersStr, targetPath, permissionStr string, defaultVa
 		return Config{}, err
 	}
 
+	// Authorize gateway before any auth or cloud-identity acquisition so a
+	// tenant SPC cannot exfiltrate provider credentials to an arbitrary URL.
+	gatewayURL, err := trustedGatewayURL(config.AkeylessGatewayURL, defaultVaultAddr)
+	if err != nil {
+		return Config{}, err
+	}
+	config.AkeylessGatewayURL = gatewayURL
+
 	config.session = &authSession{client: createClient(config.AkeylessGatewayURL)}
 	aklClient := config.Client()
 	// Skip when AccessID is unset so offline unit tests and incomplete configs
@@ -322,6 +330,24 @@ func (c *Config) validate() error {
 	return nil
 }
 
+// Share only a stateless HTTP transport across mounts. Auth sessions/tokens
+// remain per-Config. IdleConnTimeout bounds retained keep-alive connections.
+var providerHTTPTransport = &http.Transport{
+	DialContext: (&net.Dialer{
+		Timeout:   55 * time.Second,
+		KeepAlive: 55 * time.Second,
+	}).DialContext,
+	TLSHandshakeTimeout:   30 * time.Second,
+	ExpectContinueTimeout: 30 * time.Second,
+	MaxIdleConns:          100,
+	MaxIdleConnsPerHost:   100,
+	MaxConnsPerHost:       200,
+	IdleConnTimeout:       90 * time.Second,
+}
+
+// createClient builds an SDK client for an already-authorized gateway URL.
+// Redirects are disabled so credential-bearing requests cannot be replayed
+// to a second endpoint via 307/308.
 func createClient(akeylessGatewayURL string) *akeyless.V2ApiService {
 	cfg := &akeyless.Configuration{
 		Servers: []akeyless.ServerConfiguration{
@@ -330,19 +356,11 @@ func createClient(akeylessGatewayURL string) *akeyless.V2ApiService {
 			},
 		},
 		HTTPClient: &http.Client{
-			Transport: &http.Transport{
-				DialContext: (&net.Dialer{
-					Timeout:   55 * time.Second,
-					KeepAlive: 55 * time.Second,
-				}).DialContext,
-				TLSHandshakeTimeout:   30 * time.Second,
-				ExpectContinueTimeout: 30 * time.Second,
-				// the total limit is bounded per host (MaxIdleConnsPerHost)
-				// MaxIdleConns: 0,
-				MaxIdleConnsPerHost: 100,
-				MaxConnsPerHost:     200,
+			Transport: providerHTTPTransport,
+			Timeout:   55 * time.Second,
+			CheckRedirect: func(*http.Request, []*http.Request) error {
+				return http.ErrUseLastResponse
 			},
-			Timeout: 55 * time.Second,
 		},
 	}
 	return akeyless.NewAPIClient(cfg).V2Api

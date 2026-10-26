@@ -3,7 +3,6 @@ package provider
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log"
 	"strconv"
@@ -14,8 +13,6 @@ import (
 	pb "sigs.k8s.io/secrets-store-csi-driver/provider/v1alpha1"
 )
 
-var apiErr akeyless.GenericOpenAPIError
-
 // Provider implements the secrets-store-csi-driver Provider interface and communicates with the Akeyless
 type cacheEntity struct {
 	EntryTime time.Time
@@ -25,12 +22,6 @@ type cacheEntity struct {
 type Provider struct {
 	cache    map[string]*cacheEntity
 	versions map[string]string
-}
-
-type Item struct {
-	ItemName    string `json:"item_name"`
-	ItemType    string `json:"item_type"`
-	LastVersion int32  `json:"last_version"`
 }
 
 func NewProvider() *Provider {
@@ -48,15 +39,13 @@ func setBodyToken(cfg config.Config, setUID func(string), setToken func(string))
 	}
 }
 
-func (p *Provider) loadItems(ctx context.Context, cfg config.Config) {
-
+func (p *Provider) loadItems(ctx context.Context, cfg config.Config) error {
 	p.versions = make(map[string]string)
 
 	for _, secret := range cfg.Parameters.Secrets {
 		version, secVal, err := p.GetSecretByType(ctx, secret.SecretPath, cfg)
 		if err != nil {
-			log.Fatal(err.Error())
-			return
+			return fmt.Errorf("load secret %q: %w", secret.SecretPath, err)
 		}
 		p.versions[fmt.Sprintf("%s:%s", secret.FileName, secret.SecretPath)] = strconv.Itoa(int(version))
 		ce, ok := p.cache[secret.SecretPath]
@@ -66,6 +55,7 @@ func (p *Provider) loadItems(ctx context.Context, cfg config.Config) {
 		p.cache[secret.SecretPath].Value = secVal
 		p.cache[secret.SecretPath].EntryTime = time.Now()
 	}
+	return nil
 }
 
 func (p *Provider) GetSecretByType(ctx context.Context, itemName string, cfg config.Config) (int32, string, error) {
@@ -94,20 +84,11 @@ func (p *Provider) DescribeItem(ctx context.Context, itemName string, cfg config
 	body := akeyless.DescribeItem{
 		Name: itemName,
 	}
-
 	setBodyToken(cfg, body.SetUidToken, body.SetToken)
 
 	gsvOut, res, err := cfg.Client().DescribeItem(ctx).Body(body).Execute()
 	if err != nil {
-		if errors.As(err, &apiErr) {
-			var item *Item
-			err = json.Unmarshal(apiErr.Body(), &item)
-			if err != nil {
-				return nil, fmt.Errorf("can't describe item: %v, error: %v", itemName, string(apiErr.Body()))
-			}
-		} else {
-			return nil, fmt.Errorf("can't describe item: %w", err)
-		}
+		return nil, fmt.Errorf("can't describe item %q: %w", itemName, err)
 	}
 	defer res.Body.Close()
 
@@ -118,14 +99,10 @@ func (p *Provider) GetCertificate(ctx context.Context, itemName string, cfg conf
 	body := akeyless.GetCertificateValue{
 		Name: itemName,
 	}
-
 	setBodyToken(cfg, body.SetUidToken, body.SetToken)
 
 	gcvOut, res, err := cfg.Client().GetCertificateValue(ctx).Body(body).Execute()
 	if err != nil {
-		if errors.As(err, &apiErr) {
-			return "", fmt.Errorf("can't get certificate value: %v", string(apiErr.Body()))
-		}
 		return "", fmt.Errorf("can't get certificate value: %w", err)
 	}
 	defer res.Body.Close()
@@ -142,14 +119,10 @@ func (p *Provider) GetStaticSecret(ctx context.Context, itemName string, cfg con
 	body := akeyless.GetSecretValue{
 		Names: []string{itemName},
 	}
-
 	setBodyToken(cfg, body.SetUidToken, body.SetToken)
 
 	gsvOut, res, err := cfg.Client().GetSecretValue(ctx).Body(body).Execute()
 	if err != nil {
-		if errors.As(err, &apiErr) {
-			return "", fmt.Errorf("can't get secret value: %v", string(apiErr.Body()))
-		}
 		return "", fmt.Errorf("can't get secret value: %w", err)
 	}
 	defer res.Body.Close()
@@ -166,7 +139,9 @@ func (p *Provider) GetStaticSecret(ctx context.Context, itemName string, cfg con
 
 // HandleMountRequest mounts content of the vault object to target path
 func (p *Provider) HandleMountRequest(ctx context.Context, cfg config.Config) (*pb.MountResponse, error) {
-	p.loadItems(ctx, cfg)
+	if err := p.loadItems(ctx, cfg); err != nil {
+		return nil, err
+	}
 
 	var files []*pb.File
 	for name, value := range p.cache {
@@ -194,9 +169,6 @@ func (p *Provider) GetRotatedSecret(ctx context.Context, itemName string, cfg co
 
 	gsvOut, res, err := cfg.Client().GetRotatedSecretValue(ctx).Body(body).Execute()
 	if err != nil {
-		if errors.As(err, &apiErr) {
-			return "", fmt.Errorf("can't get secret value: %v", string(apiErr.Body()))
-		}
 		return "", fmt.Errorf("can't get secret value: %w", err)
 	}
 	defer res.Body.Close()

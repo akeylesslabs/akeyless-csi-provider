@@ -2,6 +2,15 @@
 
 [Akeyless](https://www.akeyless.io/) provider for the [Secrets Store CSI driver](https://github.com/kubernetes-sigs/secrets-store-csi-driver) allows you to get secrets stored in Akeyless and use the Secrets Store CSI driver interface to mount them into Kubernetes pods.
 
+## Gateway allowlist
+
+Before authenticating, the provider authorizes `akeylessGatewayURL` against operator configuration (not SPC-controlled allowlists):
+
+1. `AKEYLESS_URL` / `--akeyless-address` (default trusted gateway)
+2. Extra base URLs in `AKEYLESS_ALLOWED_GATEWAY_URLS` (comma-separated)
+
+Unlisted gateways are rejected so a tenant SPC cannot redirect provider credentials to an attacker-controlled endpoint. Prefer HTTPS.
+
 ## Authentication
 
 Supported `akeylessAccessType` values:

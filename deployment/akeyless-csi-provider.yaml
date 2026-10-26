@@ -9,31 +9,9 @@ metadata:
   name: akeyless-csi-provider
   namespace: csi
 ---
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  name: akeyless-csi-provider-clusterrole
-rules:
-- apiGroups:
-  - ""
-  resources:
-  - serviceaccounts/token
-  verbs:
-  - create
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: akeyless-csi-provider-clusterrolebinding
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: akeyless-csi-provider-clusterrole
-subjects:
-- kind: ServiceAccount
-  name: akeyless-csi-provider
-  namespace: csi
----
+# TokenRequest ClusterRole/Binding intentionally omitted: this provider does not
+# call the TokenRequest API. Avoid granting cluster-wide minting if a pod SA
+# token is ever exfiltrated. Audit the separately maintained Helm chart too.
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
