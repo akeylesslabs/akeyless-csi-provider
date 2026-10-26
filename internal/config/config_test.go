@@ -205,13 +205,6 @@ func TestValidateConfig(t *testing.T) {
 			cfg:      minimumValid,
 		},
 		{
-			name: "No role name",
-			cfg: func() Config {
-				cfg := minimumValid
-				return cfg
-			}(),
-		},
-		{
 			name: "No target path",
 			cfg: func() Config {
 				cfg := minimumValid

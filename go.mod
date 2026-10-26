@@ -1,6 +1,6 @@
 module github.com/akeylesslabs/akeyless-csi-provider
 
-go 1.26.4
+go 1.27.3
 
 require (
 	github.com/akeylesslabs/akeyless-go-cloud-id v0.3.5
