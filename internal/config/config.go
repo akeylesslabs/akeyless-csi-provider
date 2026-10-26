@@ -26,6 +26,10 @@ const (
 	AkeylessGCPAudience       = "AKEYLESS_GCP_AUDIENCE"
 	AkeylessUIDInitToken      = "AKEYLESS_UID_INIT_TOKEN"
 	AkeylessK8sAuthConfigName = "AKEYLESS_K8S_AUTH_CONFIG_NAME"
+
+	// CSI attribute carrying kubelet-issued pod ServiceAccount tokens
+	// (JSON map of audience -> {token, expirationTimestamp}).
+	csiServiceAccountTokensAttr = "csi.storage.k8s.io/serviceAccount.tokens"
 )
 
 type accessType string
@@ -37,10 +41,10 @@ const (
 	GCP               accessType = "gcp"
 	UniversalIdentity accessType = "universal_identity"
 	K8S               accessType = "k8s"
-)
-
-var (
-	AklClient *akeyless.V2ApiService
+	// JWT is Akeyless OAuth2.0/JWT auth (API access-type=jwt).
+	JWT accessType = "jwt"
+	// OAuth2 is accepted as an alias of JWT for SecretProviderClass/env convenience.
+	OAuth2 accessType = "oauth2"
 )
 
 // Config represents all of the provider's configurable behaviour from the MountRequest proto message:
@@ -51,6 +55,7 @@ type Config struct {
 	Parameters
 	TargetPath     string
 	FilePermission os.FileMode
+	session        *authSession
 }
 
 // Parameters stores the parameters specified in a mount request's `Attributes` field.
@@ -75,6 +80,18 @@ type Parameters struct {
 	AkeylessGCPAudience       string
 	AkeylessUIDInitToken      string
 	AkeylessK8sAuthConfigName string
+	// AkeylessJWTAudience selects which entry to use from
+	// csi.storage.k8s.io/serviceAccount.tokens. Must match a tokenRequests
+	// audience on the secrets-store CSIDriver and the Akeyless OAuth2/JWT
+	// auth-method audience (if configured).
+	AkeylessJWTAudience string
+	// ServiceAccountTokensJSON is the raw
+	// csi.storage.k8s.io/serviceAccount.tokens mount attribute from kubelet.
+	ServiceAccountTokensJSON string
+
+	// accessTypeExplicit is true when akeylessAccessType came from SPC params
+	// or AKEYLESS_ACCESS_TYPE (not the access_key default).
+	accessTypeExplicit bool
 }
 
 type TLSConfig struct {
@@ -111,17 +128,34 @@ func Parse(secretStr, parametersStr, targetPath, permissionStr string, defaultVa
 		return Config{}, err
 	}
 
-	AklClient = createClient(config.AkeylessGatewayURL)
-	if config.Parameters.AkeylessAccessType == "" {
-		config.Parameters.AkeylessAccessType = string(config.detectAccessType(AklClient))
+	// Authorize gateway before any auth or cloud-identity acquisition so a
+	// tenant SPC cannot exfiltrate provider credentials to an arbitrary URL.
+	gatewayURL, err := trustedGatewayURL(config.AkeylessGatewayURL, defaultVaultAddr)
+	if err != nil {
+		return Config{}, err
+	}
+	config.AkeylessGatewayURL = gatewayURL
 
-		if config.Parameters.AkeylessAccessType == "" {
-			return Config{}, fmt.Errorf("failed to detect access type of %s", config.AkeylessAccessID)
+	config.session = &authSession{client: createClient(config.AkeylessGatewayURL)}
+	aklClient := config.Client()
+	// Skip when AccessID is unset so offline unit tests and incomplete configs
+	// can still parse; Mount will fail later without a token.
+	if config.AkeylessAccessID != "" {
+		if config.accessTypeExplicit {
+			// Explicit type: authenticate only with that method (no probing).
+			if err := config.authenticateConfigured(context.Background(), aklClient); err != nil {
+				return Config{}, err
+			}
+		} else {
+			// Omitted akeylessAccessType: preserve legacy auto-detect so AWS/Azure/GCP/k8s
+			// configs without an access key keep working.
+			detected := config.detectAccessType(aklClient)
+			if detected == "" {
+				return Config{}, fmt.Errorf("failed to detect access type of %s", config.AkeylessAccessID)
+			}
+			config.AkeylessAccessType = string(detected)
 		}
-		log.Printf("successfully connected using %s access type", config.AkeylessAccessType)
-	} else {
-		// will perform initial authentiaction
-		config.detectAccessType(AklClient)
+		log.Printf("successfully authenticated using %s access type", config.AkeylessAccessType)
 	}
 
 	err = json.Unmarshal([]byte(permissionStr), &config.FilePermission)
@@ -166,6 +200,11 @@ func parseParameters(secretStr, parametersStr string, defaultAkeylessGatewayURL 
 	parameters.AkeylessGCPAudience = params["akeylessGCPAudience"]
 	parameters.AkeylessUIDInitToken = params["akeylessUIDInitToken"]
 	parameters.AkeylessK8sAuthConfigName = params["akeylessK8sAuthConfigName"]
+	parameters.AkeylessJWTAudience = params["akeylessJWTAudience"]
+	parameters.ServiceAccountTokensJSON = params[csiServiceAccountTokensAttr]
+	// Do not accept a static JWT from SPC parameters or nodePublishSecretRef:
+	// those values expire and are not rotated. jwt/oauth2 uses the pod's
+	// ServiceAccount token from csi.storage.k8s.io/serviceAccount.tokens.
 
 	if parameters.AkeylessAccessKey == "" && secret != nil {
 		parameters.AkeylessAccessKey = secret["akeylessAccessKey"]
@@ -186,6 +225,7 @@ func parseParameters(secretStr, parametersStr string, defaultAkeylessGatewayURL 
 	if parameters.AkeylessAccessType == "" {
 		parameters.AkeylessAccessType = os.Getenv(AkeylessAccessType)
 	}
+	accessTypeExplicit := parameters.AkeylessAccessType != ""
 
 	if parameters.AkeylessAccessID == "" {
 		parameters.AkeylessAccessID = os.Getenv(AkeylessAccessID)
@@ -223,6 +263,12 @@ func parseParameters(secretStr, parametersStr string, defaultAkeylessGatewayURL 
 	if parameters.AkeylessAccessType == "" {
 		parameters.AkeylessAccessType = string(AccessKey)
 	}
+	parameters.accessTypeExplicit = accessTypeExplicit
+
+	if isJWTAccessType(parameters.AkeylessAccessType) {
+		// Normalize oauth2 alias to the API access-type value.
+		parameters.AkeylessAccessType = string(JWT)
+	}
 
 	if parameters.VaultKubernetesMountPath == "" {
 		parameters.VaultKubernetesMountPath = defaultVaultKubernetesMountPath
@@ -255,6 +301,19 @@ func (c *Config) UsingK8S() bool {
 	return accessType(c.AkeylessAccessType) == K8S
 }
 
+func (c *Config) UsingJWT() bool {
+	return isJWTAccessType(c.AkeylessAccessType)
+}
+
+func isJWTAccessType(accType string) bool {
+	switch accessType(accType) {
+	case JWT, OAuth2:
+		return true
+	default:
+		return false
+	}
+}
+
 func (c *Config) validate() error {
 	// Some basic validation checks.
 	if c.TargetPath == "" {
@@ -263,10 +322,37 @@ func (c *Config) validate() error {
 	if len(c.Parameters.Secrets) == 0 {
 		return errors.New("no secrets configured - the provider will not read any secret material")
 	}
+	if c.UsingJWT() {
+		if c.AkeylessAccessID == "" {
+			return errors.New("akeylessAccessID is required for jwt/oauth2 authentication")
+		}
+		// Presence only — parse, expiry check, and the token log line run in authWithJWT.
+		if !c.hasWorkloadJWT() {
+			return errors.New("jwt/oauth2 requires akeylessJWTAudience and csi.storage.k8s.io/serviceAccount.tokens")
+		}
+	}
 
 	return nil
 }
 
+// Share only a stateless HTTP transport across mounts. Auth sessions/tokens
+// remain per-Config. IdleConnTimeout bounds retained keep-alive connections.
+var providerHTTPTransport = &http.Transport{
+	DialContext: (&net.Dialer{
+		Timeout:   55 * time.Second,
+		KeepAlive: 55 * time.Second,
+	}).DialContext,
+	TLSHandshakeTimeout:   30 * time.Second,
+	ExpectContinueTimeout: 30 * time.Second,
+	MaxIdleConns:          100,
+	MaxIdleConnsPerHost:   100,
+	MaxConnsPerHost:       200,
+	IdleConnTimeout:       90 * time.Second,
+}
+
+// createClient builds an SDK client for an already-authorized gateway URL.
+// Redirects are disabled so credential-bearing requests cannot be replayed
+// to a second endpoint via 307/308.
 func createClient(akeylessGatewayURL string) *akeyless.V2ApiService {
 	cfg := &akeyless.Configuration{
 		Servers: []akeyless.ServerConfiguration{
@@ -275,22 +361,39 @@ func createClient(akeylessGatewayURL string) *akeyless.V2ApiService {
 			},
 		},
 		HTTPClient: &http.Client{
-			Transport: &http.Transport{
-				DialContext: (&net.Dialer{
-					Timeout:   55 * time.Second,
-					KeepAlive: 55 * time.Second,
-				}).DialContext,
-				TLSHandshakeTimeout:   30 * time.Second,
-				ExpectContinueTimeout: 30 * time.Second,
-				// the total limit is bounded per host (MaxIdleConnsPerHost)
-				// MaxIdleConns: 0,
-				MaxIdleConnsPerHost: 100,
-				MaxConnsPerHost:     200,
+			Transport: providerHTTPTransport,
+			Timeout:   55 * time.Second,
+			CheckRedirect: func(*http.Request, []*http.Request) error {
+				return http.ErrUseLastResponse
 			},
-			Timeout: 55 * time.Second,
 		},
 	}
 	return akeyless.NewAPIClient(cfg).V2Api
+}
+
+// authenticateConfigured performs the initial auth for the explicitly configured
+// access type. Unlike detectAccessType it does not probe other methods, which
+// avoids accidentally authenticating with a weaker or unintended credential.
+func (c *Config) authenticateConfigured(ctx context.Context, aklClient *akeyless.V2ApiService) error {
+	switch {
+	case c.UsingAccessKey():
+		return c.authWithAccessKey(ctx, aklClient)
+	case c.UsingAWS():
+		return c.authWithAWS(ctx, aklClient)
+	case c.UsingAzure():
+		return c.authWithAzure(ctx, aklClient)
+	case c.UsingGCP():
+		return c.authWithGCP(ctx, aklClient)
+	case c.UsingK8S():
+		return c.authWithK8S(ctx, aklClient)
+	case c.UsingJWT():
+		return c.authWithJWT(ctx, aklClient)
+	case c.UsingUID():
+		c.setAuthToken(c.AkeylessUIDInitToken)
+		return c.rotateUIDToken(ctx, aklClient)
+	default:
+		return fmt.Errorf("unsupported akeylessAccessType %q", c.AkeylessAccessType)
+	}
 }
 
 func (c *Config) detectAccessType(aklClient *akeyless.V2ApiService) accessType {
@@ -320,7 +423,14 @@ func (c *Config) detectAccessType(aklClient *akeyless.V2ApiService) accessType {
 		return K8S
 	}
 
-	setAuthToken(c.AkeylessUIDInitToken)
+	// Only probe JWT when this mount has a workload SA token for the audience.
+	if c.hasWorkloadJWT() {
+		if err := c.authWithJWT(context.Background(), aklClient); err == nil {
+			return JWT
+		}
+	}
+
+	c.setAuthToken(c.AkeylessUIDInitToken)
 
 	if err := c.rotateUIDToken(context.Background(), aklClient); err == nil {
 		return UniversalIdentity
