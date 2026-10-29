@@ -1,6 +1,7 @@
-# Dependabot version updates: one PR per available dependency bump, checked weekly,
-# for every package ecosystem found in this repo. GitHub's default 3-day cooldown
-# on newly published versions applies. Managed org-wide by AppSec.
+# Dependabot version updates: checked weekly for every package ecosystem found in
+# this repo, one PR per available bump, up to 100 open PRs per ecosystem (Dependabot
+# pauses opening more until some are closed). GitHub's default 3-day cooldown on
+# newly published versions applies. Managed org-wide by AppSec.
 version: 2
 updates:
 - package-ecosystem: docker
