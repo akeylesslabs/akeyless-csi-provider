@@ -1,0 +1,16 @@
+# Dependabot version updates: checked weekly for every package ecosystem found in
+# this repo, one PR per available bump, up to 100 open PRs per ecosystem (Dependabot
+# pauses opening more until some are closed). GitHub's default 3-day cooldown on
+# newly published versions applies. Managed org-wide by AppSec.
+version: 2
+updates:
+- package-ecosystem: docker
+  directory: /
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 100
+- package-ecosystem: gomod
+  directory: /
+  schedule:
+    interval: weekly
+  open-pull-requests-limit: 100
