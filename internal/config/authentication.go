@@ -119,8 +119,14 @@ func (c *Config) authWithAzure(ctx context.Context, aklClient *akeyless.V2ApiSer
 	cloudId, err := azure.GetCloudId(c.AkeylessAzureObjectID)
 	if err != nil {
 		// Empty object ID uses DefaultAzureCredential (AKS Workload Identity /
-		// managed identity). Non-empty uses IMDS with object_id.
-		hint := "ensure the CSI provider DaemonSet can obtain an Azure token via IMDS (akeylessAzureObjectID / AKEYLESS_AZURE_OBJECT_ID) or AKS Workload Identity (pod label azure.workload.identity/use=true and ServiceAccount annotation azure.workload.identity/client-id)"
+		// managed identity). Non-empty uses IMDS with object_id only — WI is
+		// ignored until akeylessAzureObjectID / AKEYLESS_AZURE_OBJECT_ID are cleared.
+		hint := "ensure the CSI provider DaemonSet can obtain an Azure token via IMDS using akeylessAzureObjectID / AKEYLESS_AZURE_OBJECT_ID"
+		if c.AkeylessAzureObjectID == "" {
+			hint = "ensure AKS Workload Identity is configured on the CSI provider DaemonSet (pod label azure.workload.identity/use=true and ServiceAccount annotation azure.workload.identity/client-id), or set akeylessAzureObjectID / AKEYLESS_AZURE_OBJECT_ID for IMDS"
+		} else {
+			hint += "; to use Workload Identity instead, clear akeylessAzureObjectID and AKEYLESS_AZURE_OBJECT_ID so DefaultAzureCredential is used"
+		}
 		return fmt.Errorf("requested access type %v but failed to get cloud ID: %v; %s", AzureAD, err, hint)
 	}
 	authBody.SetCloudId(cloudId)
