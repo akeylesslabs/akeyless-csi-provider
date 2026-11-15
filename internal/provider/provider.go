@@ -75,6 +75,9 @@ func (p *Provider) GetSecretByType(ctx context.Context, itemName string, cfg con
 	case "ROTATED_SECRET":
 		secret, err = p.GetRotatedSecret(ctx, item.GetItemName(), cfg)
 	default:
+		if secretType == "" {
+			return 0, "", fmt.Errorf("empty item type for secret %s (describe succeeded without a type; check auth and item permissions)", itemName)
+		}
 		return 0, "", fmt.Errorf("unsupported item type %s for secret %s", secretType, itemName)
 	}
 	return version, secret, err

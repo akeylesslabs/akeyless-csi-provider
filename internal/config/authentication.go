@@ -118,7 +118,10 @@ func (c *Config) authWithAzure(ctx context.Context, aklClient *akeyless.V2ApiSer
 	authBody.SetAccessType(string(AzureAD))
 	cloudId, err := azure.GetCloudId(c.AkeylessAzureObjectID)
 	if err != nil {
-		return fmt.Errorf("requested access type %v but failed to get cloud ID, error: %v", AzureAD, err)
+		// Empty object ID uses DefaultAzureCredential (AKS Workload Identity /
+		// managed identity). Non-empty uses IMDS with object_id.
+		hint := "ensure the CSI provider DaemonSet can obtain an Azure token via IMDS (akeylessAzureObjectID / AKEYLESS_AZURE_OBJECT_ID) or AKS Workload Identity (pod label azure.workload.identity/use=true and ServiceAccount annotation azure.workload.identity/client-id)"
+		return fmt.Errorf("requested access type %v but failed to get cloud ID: %v; %s", AzureAD, err, hint)
 	}
 	authBody.SetCloudId(cloudId)
 	err = c.authenticate(ctx, aklClient, authBody)
